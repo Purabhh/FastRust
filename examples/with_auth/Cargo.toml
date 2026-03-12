@@ -1,0 +1,11 @@
+[package]
+name = "with_auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+http.workspace = true
+tokio.workspace = true
+rust_squared = { path = "../../rust_squared" }
