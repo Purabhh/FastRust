@@ -83,6 +83,10 @@ impl RequestContext {
         self.path_params.get(key).map(String::as_str)
     }
 
+    pub fn path_params(&self) -> &PathParams {
+        &self.path_params
+    }
+
     pub fn state(&self) -> &AppState {
         &self.state
     }

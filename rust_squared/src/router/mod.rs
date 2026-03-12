@@ -8,7 +8,7 @@ use http::Method;
 
 use crate::error::RsqError;
 
-pub use route::Route;
+pub use route::{Route, RouteMeta};
 use trie::{Match, TrieNode};
 
 pub type PathParams = HashMap<String, String>;
@@ -52,6 +52,10 @@ impl Router {
                 allowed: Vec::new(),
             }),
         }
+    }
+
+    pub fn routes(&self) -> &[Route] {
+        &self.routes
     }
 }
 

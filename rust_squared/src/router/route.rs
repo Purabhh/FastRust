@@ -10,11 +10,54 @@ use crate::response::{IntoResponse, Response};
 pub type BoxedHandler =
     Arc<dyn Fn(RequestContext) -> BoxFuture<'static, Result<Response, RsqError>> + Send + Sync>;
 
+#[derive(Clone, Debug, Default)]
+pub struct RouteMeta {
+    summary: Option<String>,
+    description: Option<String>,
+    operation_id: Option<String>,
+    tags: Vec<String>,
+}
+
+impl RouteMeta {
+    pub fn summary(&self) -> Option<&str> {
+        self.summary.as_deref()
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    pub fn operation_id(&self) -> Option<&str> {
+        self.operation_id.as_deref()
+    }
+
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    pub fn set_summary(&mut self, summary: impl Into<String>) {
+        self.summary = Some(summary.into());
+    }
+
+    pub fn set_description(&mut self, description: impl Into<String>) {
+        self.description = Some(description.into());
+    }
+
+    pub fn set_operation_id(&mut self, operation_id: impl Into<String>) {
+        self.operation_id = Some(operation_id.into());
+    }
+
+    pub fn add_tag(&mut self, tag: impl Into<String>) {
+        self.tags.push(tag.into());
+    }
+}
+
 #[derive(Clone)]
 pub struct Route {
     method: Method,
     pattern: String,
     handler: BoxedHandler,
+    meta: RouteMeta,
 }
 
 impl Route {
@@ -31,7 +74,13 @@ impl Route {
                 let fut = handler(ctx);
                 Box::pin(async move { fut.await.map(IntoResponse::into_response) })
             }),
+            meta: RouteMeta::default(),
         }
+    }
+
+    pub fn with_meta(mut self, meta: RouteMeta) -> Self {
+        self.meta = meta;
+        self
     }
 
     pub fn method(&self) -> &Method {
@@ -40,6 +89,10 @@ impl Route {
 
     pub fn pattern(&self) -> &str {
         &self.pattern
+    }
+
+    pub fn meta(&self) -> &RouteMeta {
+        &self.meta
     }
 
     pub async fn call(&self, ctx: RequestContext) -> Result<Response, RsqError> {

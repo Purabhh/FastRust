@@ -10,6 +10,9 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
 use crate::error::RsqError;
+use crate::extract::Handler;
+use crate::middleware::{Next, RsqMiddleware};
+use crate::openapi::{openapi_response, swagger_ui_response};
 use crate::request::RequestContext;
 use crate::response::{IntoResponse, Response};
 use crate::router::{MethodNotAllowed, Route, Router};
@@ -19,6 +22,8 @@ use crate::state::AppState;
 pub struct RsqApp {
     router: Router,
     state: AppState,
+    middlewares: Arc<Vec<Arc<dyn RsqMiddleware>>>,
+    docs_enabled: bool,
 }
 
 impl RsqApp {
@@ -29,6 +34,45 @@ impl RsqApp {
     pub fn route(mut self, route: Route) -> Result<Self, RsqError> {
         self.router.insert(route)?;
         Ok(self)
+    }
+
+    pub fn middleware<M>(mut self, middleware: M) -> Self
+    where
+        M: RsqMiddleware,
+    {
+        Arc::make_mut(&mut self.middlewares).push(Arc::new(middleware));
+        self
+    }
+
+    pub fn with_docs(mut self) -> Self {
+        self.docs_enabled = true;
+        self
+    }
+
+    pub fn route_handler<H, Args>(
+        self,
+        method: Method,
+        pattern: impl Into<String>,
+        handler: H,
+    ) -> Result<Self, RsqError>
+    where
+        H: Handler<Args>,
+    {
+        self.route(handler.into_route(method, pattern.into()))
+    }
+
+    pub fn get<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
+    where
+        H: Handler<Args>,
+    {
+        self.route_handler(Method::GET, pattern, handler)
+    }
+
+    pub fn post<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
+    where
+        H: Handler<Args>,
+    {
+        self.route_handler(Method::POST, pattern, handler)
     }
 
     pub fn state<T>(mut self, value: T) -> Result<Self, RsqError>
@@ -47,9 +91,13 @@ impl RsqApp {
         let method = request.method().clone();
         let path = request.uri().path().to_string();
 
+        if let Some(response) = self.docs_response(&method, &path) {
+            return response;
+        }
+
         match self.router.find(&method, &path) {
             Ok((route, params)) => match RequestContext::from_request(request, params, self.state.clone()).await {
-                Ok(ctx) => match route.call(ctx).await {
+                Ok(ctx) => match Next::new(Arc::clone(&self.middlewares), route.clone()).run(ctx).await {
                     Ok(response) => response,
                     Err(error) => error.into_response(),
                 },
@@ -64,10 +112,14 @@ impl RsqApp {
         let method = request.method().clone();
         let path = request.uri().path().to_string();
 
+        if let Some(response) = self.docs_response(&method, &path) {
+            return response;
+        }
+
         match self.router.find(&method, &path) {
             Ok((route, params)) => {
                 let ctx = RequestContext::from_incoming(request, params, self.state.clone());
-                match route.call(ctx).await {
+                match Next::new(Arc::clone(&self.middlewares), route.clone()).run(ctx).await {
                     Ok(response) => response,
                     Err(error) => error.into_response(),
                 }
@@ -104,6 +156,18 @@ impl RsqApp {
             });
         }
     }
+
+    fn docs_response(&self, method: &Method, path: &str) -> Option<Response> {
+        if !self.docs_enabled {
+            return None;
+        }
+
+        match (method, path) {
+            (&Method::GET, "/openapi.json") => Some(openapi_response(self.router.routes()).into_response()),
+            (&Method::GET, "/docs") => Some(swagger_ui_response("/openapi.json").into_response()),
+            _ => None,
+        }
+    }
 }
 
 fn method_not_allowed_response(allowed: Vec<Method>) -> Response {
@@ -125,8 +189,10 @@ mod tests {
     use bytes::Bytes;
     use http::{Method, Request, StatusCode};
     use http_body_util::Full;
+    use serde::Deserialize;
 
     use super::RsqApp;
+    use crate::extract::{Path, Query};
     use crate::router::Route;
 
     #[tokio::test]
@@ -171,5 +237,77 @@ mod tests {
     fn state_rejects_duplicate_types() {
         let err = RsqApp::new().state(1_u64).unwrap().state(2_u64).err().unwrap();
         assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[derive(Deserialize)]
+    struct UserPath {
+        id: u64,
+    }
+
+    #[derive(Deserialize)]
+    struct UserQuery {
+        verbose: bool,
+    }
+
+    #[tokio::test]
+    async fn get_handler_supports_extractors() {
+        async fn show_user(
+            Path(path): Path<UserPath>,
+            Query(query): Query<UserQuery>,
+        ) -> Result<String, crate::RsqError> {
+            Ok(format!("{}:{}", path.id, query.verbose))
+        }
+
+        let app = RsqApp::new().get("/users/{id}", show_user).unwrap();
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/users/5?verbose=true")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn serves_openapi_json_when_docs_enabled() {
+        let app = RsqApp::new()
+            .with_docs()
+            .route(Route::new(Method::GET, "/users/{id}", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/openapi.json")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[http::header::CONTENT_TYPE], "application/json");
+    }
+
+    #[tokio::test]
+    async fn serves_docs_html_when_enabled() {
+        let app = RsqApp::new().with_docs();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/docs")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[http::header::CONTENT_TYPE], "text/html; charset=utf-8");
     }
 }

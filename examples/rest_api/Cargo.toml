@@ -6,6 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-http.workspace = true
+serde.workspace = true
 tokio.workspace = true
 rust_squared = { path = "../../rust_squared" }

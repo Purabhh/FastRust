@@ -34,6 +34,14 @@ impl RsqError {
         Self::new(StatusCode::BAD_REQUEST, message)
     }
 
+    pub fn unsupported_media_type(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, message)
+    }
+
+    pub fn unprocessable_entity(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNPROCESSABLE_ENTITY, message)
+    }
+
     pub fn status(&self) -> StatusCode {
         self.status
     }

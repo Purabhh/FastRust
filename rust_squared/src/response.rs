@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use http::StatusCode;
+use http::header::CONTENT_TYPE;
 use http_body_util::Full;
 
 pub type RsqBody = Full<Bytes>;
@@ -8,6 +9,8 @@ pub type Response = http::Response<RsqBody>;
 pub trait IntoResponse {
     fn into_response(self) -> Response;
 }
+
+pub struct Html(pub String);
 
 fn build_response(status: StatusCode, body: Bytes) -> Response {
     http::Response::builder()
@@ -55,5 +58,15 @@ impl IntoResponse for (StatusCode, &'static str) {
 impl IntoResponse for (StatusCode, String) {
     fn into_response(self) -> Response {
         build_response(self.0, Bytes::from(self.1))
+    }
+}
+
+impl IntoResponse for Html {
+    fn into_response(self) -> Response {
+        let mut response = build_response(StatusCode::OK, Bytes::from(self.0));
+        response
+            .headers_mut()
+            .insert(CONTENT_TYPE, http::HeaderValue::from_static("text/html; charset=utf-8"));
+        response
     }
 }
