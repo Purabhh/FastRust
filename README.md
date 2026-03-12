@@ -34,21 +34,49 @@ FastRust sits in the middle:
 | Axum / Actix Web | Mature ecosystem, productive, batteries included | You adopt their framework model |
 | FastRust | FastAPI-style ergonomics on a Hyper-native base | Still early, MVP stage, features still growing |
 
-## Comparison
+## Simplicity Comparison
 
-### Raw Hyper
+The most important question for FastRust is not just "is it fast?" but:
 
-With raw Hyper, you usually match on method and path manually and build responses yourself:
+How little code should it take to do something common and real?
+
+Below is the same idea in four styles: fetch one user from a database and return JSON from
+`GET /users/{id}`.
+
+### 1. Raw Rust on Hyper
+
+This is powerful, but you manually handle routing, path parsing, response building, and glue code.
 
 ```rust
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
 use http_body_util::Full;
 use hyper::body::Incoming;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct User {
+    id: u64,
+    name: String,
+}
+
+async fn load_user(id: u64) -> User {
+    User { id, name: "Ada".into() }
+}
 
 async fn handle(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, hyper::Error> {
     match (req.method().as_str(), req.uri().path()) {
-        ("GET", "/users/1") => Ok(Response::new(Full::new(Bytes::from("user 1")))),
+        ("GET", path) if path.starts_with("/users/") => {
+            let id = path.trim_start_matches("/users/").parse::<u64>().unwrap();
+            let user = load_user(id).await;
+            let body = serde_json::to_vec(&user).unwrap();
+
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(Full::new(Bytes::from(body)))
+                .unwrap())
+        }
         _ => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Full::new(Bytes::from("not found")))
@@ -57,24 +85,56 @@ async fn handle(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, hyper::
 }
 ```
 
-That gives you full control, but you carry the routing and request parsing burden yourself.
+### 2. Axum
 
-### Typical Rust Framework Style
-
-In many frameworks, endpoint definitions get more ergonomic, but you are still working inside that
-framework's conventions:
+Axum removes a lot of the plumbing and gives you typed extractors.
 
 ```rust
-async fn get_user(Path(id): Path<u64>) -> Json<User> {
-    Json(User { id })
+use axum::{extract::Path, response::Json, routing::get, Router};
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct User {
+    id: u64,
+    name: String,
 }
+
+async fn load_user(id: u64) -> User {
+    User { id, name: "Ada".into() }
+}
+
+async fn get_user(Path(id): Path<u64>) -> Json<User> {
+    Json(load_user(id).await)
+}
+
+let app = Router::new().route("/users/:id", get(get_user));
 ```
 
-That is productive, but the framework owns the abstractions, runtime decisions, and middleware model.
+### 3. FastAPI
 
-### FastRust
+FastAPI is the ergonomics bar many developers expect now: very little boilerplate and automatic docs.
 
-FastRust aims for clean endpoint code while staying directly on Hyper:
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class User(BaseModel):
+    id: int
+    name: str
+
+def load_user(user_id: int) -> User:
+    return User(id=user_id, name="Ada")
+
+@app.get("/users/{user_id}")
+async def get_user(user_id: int) -> User:
+    return load_user(user_id)
+```
+
+### 4. FastRust
+
+FastRust is aiming for that same clarity while staying directly on Hyper.
 
 ```rust
 use rust_squared::{Json, Path, RsqApp, get};
@@ -88,17 +148,22 @@ struct UserPath {
 #[derive(Serialize)]
 struct User {
     id: u64,
+    name: String,
+}
+
+async fn load_user(id: u64) -> User {
+    User { id, name: "Ada".into() }
 }
 
 #[get(
     "/users/{id}",
     summary = "Fetch a user",
-    description = "Returns one user from the API by id.",
+    description = "Returns one user by id.",
     operation_id = "getUser",
     tag = "Users"
 )]
 async fn get_user(Path(path): Path<UserPath>) -> Result<Json<User>, rust_squared::RsqError> {
-    Ok(Json(User { id: path.id }))
+    Ok(Json(load_user(path.id).await))
 }
 
 #[tokio::main]
@@ -110,7 +175,17 @@ async fn main() {
 }
 ```
 
-The goal is to make endpoint code feel simple while keeping the underlying stack predictable.
+### What This Comparison Shows
+
+Raw Hyper gives you maximum control, but the application code pays for it.
+
+Axum is much cleaner, but you are still building inside another framework's conventions and route
+registration model.
+
+FastAPI is extremely concise and sets the standard for automatic docs and easy handler definitions.
+
+FastRust's goal is to get as close as possible to that clarity while remaining native Rust and
+directly Hyper-based.
 
 ## Current Features
 
