@@ -150,7 +150,7 @@ async fn csrf_skips_get_blocks_post() {
         .middleware(CsrfMiddleware::new())
         .get("/page", || async { Ok("page") })
         .unwrap()
-        .post("/submit", |_ctx: rust_squared::request::RequestContext| async {
+        .post("/submit", || async {
             Ok::<_, RsqError>("submitted")
         })
         .unwrap();
@@ -251,15 +251,15 @@ async fn multiple_methods_same_path() {
     let app = RsqApp::new()
         .get("/resource", || async { Ok("GET") })
         .unwrap()
-        .post("/resource", |_ctx: rust_squared::request::RequestContext| async {
+        .post("/resource", || async {
             Ok::<_, RsqError>("POST")
         })
         .unwrap()
-        .put("/resource", |_ctx: rust_squared::request::RequestContext| async {
+        .put("/resource", || async {
             Ok::<_, RsqError>("PUT")
         })
         .unwrap()
-        .delete("/resource", |_ctx: rust_squared::request::RequestContext| async {
+        .delete("/resource", || async {
             Ok::<_, RsqError>("DELETE")
         })
         .unwrap();
