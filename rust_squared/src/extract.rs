@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use futures_util::future::BoxFuture;
 use http::header::CONTENT_TYPE;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -177,63 +178,70 @@ where
     }
 }
 
-// Named async fn helpers — workaround for rust#100013.
-// Async fns own their parameters, so the compiler can prove 'static.
-// Return Response directly so callers can build a BoxedHandler without Route::new.
-async fn extract_1<F, Fut, Res, A>(handler: F, mut ctx: RequestContext) -> Result<Response, RsqError>
+// Workaround for rust#100013: return BoxFuture directly instead of async fn
+// so older Rust (1.85) can prove the 'static bound on Box::pin.
+fn extract_1<F, Fut, Res, A>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
 where
-    F: Fn(A) -> Fut,
-    Fut: Future<Output = Result<Res, RsqError>>,
-    Res: IntoResponse,
-    A: FromRequest,
+    F: Fn(A) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
 {
-    let a = A::from_request(&mut ctx).await?;
-    handler(a).await.map(IntoResponse::into_response)
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        handler(a).await.map(IntoResponse::into_response)
+    })
 }
 
-async fn extract_2<F, Fut, Res, A, B>(handler: F, mut ctx: RequestContext) -> Result<Response, RsqError>
+fn extract_2<F, Fut, Res, A, B>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
 where
-    F: Fn(A, B) -> Fut,
-    Fut: Future<Output = Result<Res, RsqError>>,
-    Res: IntoResponse,
-    A: FromRequest,
-    B: FromRequest,
+    F: Fn(A, B) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
 {
-    let a = A::from_request(&mut ctx).await?;
-    let b = B::from_request(&mut ctx).await?;
-    handler(a, b).await.map(IntoResponse::into_response)
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        handler(a, b).await.map(IntoResponse::into_response)
+    })
 }
 
-async fn extract_3<F, Fut, Res, A, B, C>(handler: F, mut ctx: RequestContext) -> Result<Response, RsqError>
+fn extract_3<F, Fut, Res, A, B, C>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
 where
-    F: Fn(A, B, C) -> Fut,
-    Fut: Future<Output = Result<Res, RsqError>>,
-    Res: IntoResponse,
-    A: FromRequest,
-    B: FromRequest,
-    C: FromRequest,
+    F: Fn(A, B, C) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
 {
-    let a = A::from_request(&mut ctx).await?;
-    let b = B::from_request(&mut ctx).await?;
-    let c = C::from_request(&mut ctx).await?;
-    handler(a, b, c).await.map(IntoResponse::into_response)
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        handler(a, b, c).await.map(IntoResponse::into_response)
+    })
 }
 
-async fn extract_4<F, Fut, Res, A, B, C, D>(handler: F, mut ctx: RequestContext) -> Result<Response, RsqError>
+fn extract_4<F, Fut, Res, A, B, C, D>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
 where
-    F: Fn(A, B, C, D) -> Fut,
-    Fut: Future<Output = Result<Res, RsqError>>,
-    Res: IntoResponse,
-    A: FromRequest,
-    B: FromRequest,
-    C: FromRequest,
-    D: FromRequest,
+    F: Fn(A, B, C, D) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
 {
-    let a = A::from_request(&mut ctx).await?;
-    let b = B::from_request(&mut ctx).await?;
-    let c = C::from_request(&mut ctx).await?;
-    let d = D::from_request(&mut ctx).await?;
-    handler(a, b, c, d).await.map(IntoResponse::into_response)
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        handler(a, b, c, d).await.map(IntoResponse::into_response)
+    })
 }
 
 impl<F, Fut, Res, A> Handler<(A,)> for F
@@ -245,7 +253,7 @@ where
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
         crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
-            Box::pin(extract_1(self.clone(), ctx))
+            extract_1(self.clone(), ctx)
         }))
     }
 }
@@ -260,7 +268,7 @@ where
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
         crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
-            Box::pin(extract_2(self.clone(), ctx))
+            extract_2(self.clone(), ctx)
         }))
     }
 }
@@ -276,7 +284,7 @@ where
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
         crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
-            Box::pin(extract_3(self.clone(), ctx))
+            extract_3(self.clone(), ctx)
         }))
     }
 }
@@ -293,7 +301,7 @@ where
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
         crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
-            Box::pin(extract_4(self.clone(), ctx))
+            extract_4(self.clone(), ctx)
         }))
     }
 }
