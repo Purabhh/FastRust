@@ -108,6 +108,7 @@ impl IntoResponse for RsqError {
 mod tests {
     use super::*;
     use http::StatusCode;
+    use std::error::Error;
 
     #[test]
     fn factory_methods_return_correct_status() {

@@ -503,12 +503,13 @@ mod tests {
                 .await
         });
 
-        // Make a request to confirm server is running
-        let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-            .build_http();
-        let uri: http::Uri = format!("http://{addr}/").parse().unwrap();
-        let resp = client.get(uri).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        // Make a raw HTTP request to confirm server is running
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut stream, b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").await.unwrap();
+        let mut buf = vec![0u8; 1024];
+        let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await.unwrap();
+        let response_str = String::from_utf8_lossy(&buf[..n]);
+        assert!(response_str.contains("200"));
 
         // Send shutdown signal
         tx.send(()).unwrap();
