@@ -96,6 +96,15 @@ impl Route {
         }
     }
 
+    pub fn from_boxed(method: Method, pattern: impl Into<String>, handler: BoxedHandler) -> Self {
+        Self {
+            method,
+            pattern: pattern.into(),
+            handler,
+            meta: RouteMeta::default(),
+        }
+    }
+
     pub fn with_meta(mut self, meta: RouteMeta) -> Self {
         self.meta = meta;
         self
