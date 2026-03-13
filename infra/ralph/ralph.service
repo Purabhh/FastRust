@@ -1,0 +1,12 @@
+[Unit]
+Description=Ralph — FastRust Quality Checker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ralph/ralph.sh
+Environment=HOME=/root
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
