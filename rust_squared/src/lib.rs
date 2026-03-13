@@ -8,6 +8,7 @@ pub mod openapi;
 pub mod request;
 pub mod response;
 pub mod router;
+pub mod multipart;
 pub mod sanitize;
 pub mod schema;
 pub mod sse;
