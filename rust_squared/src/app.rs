@@ -351,20 +351,7 @@ use tower::Service;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-impl Service<Request<Incoming>> for RsqApp {
-    type Response = Response;
-    type Error = RsqError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        let this = self.clone();
-        Box::pin(async move { Ok(this.handle_incoming(req).await) })
-    }
-}
 
 fn method_not_allowed_response(allowed: Vec<Method>) -> Response {
     let allow = allowed

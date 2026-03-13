@@ -62,28 +62,4 @@ where
 
 
 
-use hyper::body::Incoming;
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto::Builder as AutoBuilder;
-use tokio::net::TcpListener;
 
-pub async fn serve<S>(service: S, addr: SocketAddr) -> Result<(), RsqError>
-where
-    S: Service<Request<Incoming>, Response = Response, Error = RsqError> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-{
-    let listener = TcpListener::bind(addr).await
-        .map_err(|e| RsqError::internal(format!("failed to bind: {e}")))?;
-
-    loop {
-        let (stream, _) = listener.accept().await
-            .map_err(|e| RsqError::internal(format!("failed to accept: {e}")))?;
-        let service = service.clone();
-        tokio::spawn(async move {
-            let io = TokioIo::new(stream);
-            if let Err(e) = AutoBuilder::new(TokioExecutor::new()).serve_connection(io, service).await {
-                tracing::error!("connection error: {e}");
-            }
-        });
-    }
-}
