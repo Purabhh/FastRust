@@ -1,12 +1,12 @@
-use rust_squared::{Json, Path, RsqApp, get};
+use rust_squared::{Json, Path, RsqApp, RsqSchema, get};
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, RsqSchema)]
 struct UserPath {
     id: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, RsqSchema)]
 struct User {
     id: u64,
 }
@@ -16,7 +16,8 @@ struct User {
     summary = "Fetch a user",
     description = "Returns one user from the API by id.",
     operation_id = "getUser",
-    tag = "Users"
+    tag = "Users",
+    response = "User"
 )]
 async fn get_user(Path(path): Path<UserPath>) -> Result<Json<User>, rust_squared::RsqError> {
     Ok(Json(User { id: path.id }))
@@ -26,6 +27,8 @@ async fn get_user(Path(path): Path<UserPath>) -> Result<Json<User>, rust_squared
 async fn main() {
     let _app = RsqApp::new()
         .with_docs()
+        .schema::<User>()
+        .schema::<UserPath>()
         .route(get_user_route())
         .expect("example route should register");
 }

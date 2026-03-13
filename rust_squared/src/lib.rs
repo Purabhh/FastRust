@@ -1,3 +1,5 @@
+extern crate self as rust_squared;
+
 pub mod app;
 pub mod error;
 pub mod extract;
@@ -6,9 +8,11 @@ pub mod openapi;
 pub mod request;
 pub mod response;
 pub mod router;
+pub mod schema;
 pub mod state;
 
 pub use http::Method;
+pub use serde_json;
 pub use app::RsqApp;
 pub use error::RsqError;
 pub use extract::{FromRequest, Handler, Json, Path, Query, State};
@@ -17,8 +21,9 @@ pub use openapi::{build_spec, openapi_response, swagger_ui_response};
 pub use request::{RequestContext, RsqRequestBody};
 pub use response::{Html, IntoResponse, Response, RsqBody};
 pub use router::{MethodNotAllowed, Route, RouteMeta, Router};
+pub use schema::RsqSchema;
 pub use state::AppState;
-pub use rust_squared_macros::{get, post, RsqSchema};
+pub use rust_squared_macros::{RsqSchema, get, post};
 
 pub fn route<H, Args>(method: Method, pattern: impl Into<String>, handler: H) -> Route
 where

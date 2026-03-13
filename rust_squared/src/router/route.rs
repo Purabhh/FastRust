@@ -16,6 +16,8 @@ pub struct RouteMeta {
     description: Option<String>,
     operation_id: Option<String>,
     tags: Vec<String>,
+    request_body_schema: Option<String>,
+    response_schema: Option<String>,
 }
 
 impl RouteMeta {
@@ -35,6 +37,14 @@ impl RouteMeta {
         &self.tags
     }
 
+    pub fn request_body_schema(&self) -> Option<&str> {
+        self.request_body_schema.as_deref()
+    }
+
+    pub fn response_schema(&self) -> Option<&str> {
+        self.response_schema.as_deref()
+    }
+
     pub fn set_summary(&mut self, summary: impl Into<String>) {
         self.summary = Some(summary.into());
     }
@@ -49,6 +59,14 @@ impl RouteMeta {
 
     pub fn add_tag(&mut self, tag: impl Into<String>) {
         self.tags.push(tag.into());
+    }
+
+    pub fn set_request_body_schema(&mut self, schema_name: impl Into<String>) {
+        self.request_body_schema = Some(schema_name.into());
+    }
+
+    pub fn set_response_schema(&mut self, schema_name: impl Into<String>) {
+        self.response_schema = Some(schema_name.into());
     }
 }
 

@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use bytes::Bytes;
 use http::{Method, Request};
@@ -16,6 +17,7 @@ use crate::openapi::{openapi_response, swagger_ui_response};
 use crate::request::RequestContext;
 use crate::response::{IntoResponse, Response};
 use crate::router::{MethodNotAllowed, Route, Router};
+use crate::schema::RsqSchema;
 use crate::state::AppState;
 
 #[derive(Clone, Default)]
@@ -24,6 +26,7 @@ pub struct RsqApp {
     state: AppState,
     middlewares: Arc<Vec<Arc<dyn RsqMiddleware>>>,
     docs_enabled: bool,
+    schemas: Arc<HashMap<String, serde_json::Value>>,
 }
 
 impl RsqApp {
@@ -46,6 +49,14 @@ impl RsqApp {
 
     pub fn with_docs(mut self) -> Self {
         self.docs_enabled = true;
+        self
+    }
+
+    pub fn schema<T>(mut self) -> Self
+    where
+        T: RsqSchema,
+    {
+        Arc::make_mut(&mut self.schemas).insert(T::schema_name().to_string(), T::schema());
         self
     }
 
@@ -163,7 +174,7 @@ impl RsqApp {
         }
 
         match (method, path) {
-            (&Method::GET, "/openapi.json") => Some(openapi_response(self.router.routes()).into_response()),
+            (&Method::GET, "/openapi.json") => Some(openapi_response(self.router.routes(), &self.schemas).into_response()),
             (&Method::GET, "/docs") => Some(swagger_ui_response("/openapi.json").into_response()),
             _ => None,
         }
@@ -189,7 +200,7 @@ mod tests {
     use bytes::Bytes;
     use http::{Method, Request, StatusCode};
     use http_body_util::Full;
-    use serde::Deserialize;
+    use serde::{Deserialize, Serialize};
 
     use super::RsqApp;
     use crate::extract::{Path, Query};
@@ -309,5 +320,33 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[http::header::CONTENT_TYPE], "text/html; charset=utf-8");
+    }
+
+    #[derive(Serialize, crate::RsqSchema)]
+    struct UserDoc {
+        id: u64,
+    }
+
+    #[tokio::test]
+    async fn serves_registered_schemas_in_openapi() {
+        let mut meta = crate::RouteMeta::default();
+        meta.set_response_schema("UserDoc");
+        let app = RsqApp::new()
+            .with_docs()
+            .schema::<UserDoc>()
+            .route(Route::new(Method::GET, "/users/{id}", |_| async { Ok("ok") }).with_meta(meta))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/openapi.json")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
