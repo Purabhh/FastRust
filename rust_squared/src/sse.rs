@@ -58,25 +58,25 @@ impl SseEvent {
         self
     }
 
-    /// Format this event as an SSE text block.
-    pub fn to_string(&self) -> String {
-        let mut out = String::new();
+}
+
+impl std::fmt::Display for SseEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(ref event) = self.event {
-            out.push_str(&format!("event: {event}\n"));
+            write!(f, "event: {event}\n")?;
         }
         if let Some(ref data) = self.data {
             for line in data.lines() {
-                out.push_str(&format!("data: {line}\n"));
+                write!(f, "data: {line}\n")?;
             }
         }
         if let Some(ref id) = self.id {
-            out.push_str(&format!("id: {id}\n"));
+            write!(f, "id: {id}\n")?;
         }
         if let Some(retry) = self.retry {
-            out.push_str(&format!("retry: {retry}\n"));
+            write!(f, "retry: {retry}\n")?;
         }
-        out.push('\n');
-        out
+        f.write_str("\n")
     }
 }
 

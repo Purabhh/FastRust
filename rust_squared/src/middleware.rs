@@ -26,7 +26,7 @@ use crate::router::Route;
 /// Implement with `Box::pin(async move { ... })`:
 /// ```ignore
 /// impl RsqMiddleware for MyMiddleware {
-///     fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+///     fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
 ///         Box::pin(async move {
 ///             // pre-processing
 ///             let response = next.run(ctx).await?;
@@ -37,7 +37,7 @@ use crate::router::Route;
 /// }
 /// ```
 pub trait RsqMiddleware: Send + Sync + 'static {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>>;
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>>;
 }
 
 #[derive(Clone)]
@@ -101,7 +101,7 @@ impl BearerAuthMiddleware {
 }
 
 impl RsqMiddleware for BearerAuthMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             let authorized = ctx
                 .headers()
@@ -132,7 +132,7 @@ impl LoggingMiddleware {
 }
 
 impl RsqMiddleware for LoggingMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             tracing::info!(method = %ctx.method(), path = %ctx.uri().path(), "request received");
             let mut response = next.run(ctx).await?;
@@ -146,7 +146,7 @@ impl RsqMiddleware for LoggingMiddleware {
 }
 
 impl RsqMiddleware for CorsMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             if ctx.method() == Method::OPTIONS {
                 let mut response = StatusCode::NO_CONTENT.into_response();
@@ -202,7 +202,7 @@ impl TimeoutMiddleware {
 }
 
 impl RsqMiddleware for TimeoutMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             match tokio::time::timeout(self.duration, next.run(ctx)).await {
                 Ok(result) => result,
@@ -224,7 +224,7 @@ impl RequestIdMiddleware {
 }
 
 impl RsqMiddleware for RequestIdMiddleware {
-    fn handle<'a>(&'a self, mut ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, mut ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             let request_id = ctx
                 .headers()
@@ -311,7 +311,7 @@ impl std::fmt::Debug for RateLimitMiddleware {
 }
 
 impl RsqMiddleware for RateLimitMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             let key = ctx
                 .headers()
@@ -367,7 +367,7 @@ impl Default for CompressionMiddleware {
 }
 
 impl RsqMiddleware for CompressionMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             let accepts_gzip = ctx
                 .headers()
@@ -431,7 +431,7 @@ impl MaxBodySizeMiddleware {
 }
 
 impl RsqMiddleware for MaxBodySizeMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             if let Some(content_length) = ctx.headers().get(CONTENT_LENGTH) {
                 if let Ok(len_str) = content_length.to_str() {
@@ -473,7 +473,7 @@ impl RequestValidationMiddleware {
 }
 
 impl RsqMiddleware for RequestValidationMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             let needs_content_type = matches!(
                 *ctx.method(),
@@ -554,7 +554,7 @@ impl SecurityHeadersMiddleware {
 }
 
 impl RsqMiddleware for SecurityHeadersMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             let mut response = next.run(ctx).await?;
             let headers = response.headers_mut();
@@ -615,7 +615,11 @@ impl CsrfMiddleware {
         use rand::Rng;
         let mut rng = rand::thread_rng();
         let bytes: Vec<u8> = (0..self.token_length).map(|_| rng.r#gen::<u8>()).collect();
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        bytes.iter().fold(String::new(), |mut acc, b| {
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
     }
 
     fn extract_cookie_value<'a>(&self, cookie_header: &'a str) -> Option<&'a str> {
@@ -639,7 +643,7 @@ impl Default for CsrfMiddleware {
 }
 
 impl RsqMiddleware for CsrfMiddleware {
-    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+    fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             let is_safe = matches!(
                 *ctx.method(),
@@ -707,7 +711,7 @@ mod tests {
     }
 
     impl RsqMiddleware for RecordingMiddleware {
-        fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<crate::Response, crate::RsqError>> {
+        fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<crate::Response, crate::RsqError>> {
             Box::pin(async move {
                 self.events.lock().await.push("before");
                 let response = next.run(ctx).await?;

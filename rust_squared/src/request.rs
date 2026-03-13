@@ -93,6 +93,10 @@ impl RequestContext {
         &self.path_params
     }
 
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer_addr
+    }
+
     pub fn state(&self) -> &AppState {
         &self.state
     }
