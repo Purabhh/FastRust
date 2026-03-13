@@ -59,12 +59,14 @@ where
     handler.into_route(method, pattern.into()).with_meta(meta)
 }
 
-pub async fn serve<S>(service: S, addr: SocketAddr) -> Result<(), RsqError>
+/// Serve any Tower `Service` as an HTTP server (supports HTTP/1 and HTTP/2).
+pub async fn serve<S>(service: S, addr: std::net::SocketAddr) -> Result<(), RsqError>
 where
-    S: Service<Request<Incoming>, Response = Response, Error = RsqError> + Clone + Send + 'static,
+    S: tower::Service<http::Request<hyper::body::Incoming>, Response = Response, Error = RsqError>
+        + Clone + Send + 'static,
     S::Future: Send + 'static,
 {
-    let listener = TcpListener::bind(addr)
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|error| RsqError::internal(format!("failed to bind listener: {error}")))?;
 
@@ -75,10 +77,12 @@ where
             .map_err(|error| RsqError::internal(format!("failed to accept connection: {error}")))?;
         let service = service.clone();
         tokio::spawn(async move {
-            let io = TokioIo::new(stream);
-            if let Err(error) = AutoBuilder::new(TokioExecutor::new())
-                .serve_connection(io, service)
-                .await
+            let io = hyper_util::rt::TokioIo::new(stream);
+            if let Err(error) = hyper_util::server::conn::auto::Builder::new(
+                hyper_util::rt::TokioExecutor::new(),
+            )
+            .serve_connection(io, service)
+            .await
             {
                 tracing::error!("connection error: {error}");
             }
