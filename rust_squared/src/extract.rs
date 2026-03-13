@@ -1,5 +1,4 @@
 use std::future::Future;
-use std::pin::Pin;
 
 use http::header::CONTENT_TYPE;
 use serde::Serialize;
@@ -178,6 +177,60 @@ where
     }
 }
 
+// Named async fn helpers — workaround for rust#100013.
+// Moving the async code out of closures lets the compiler prove lifetime bounds.
+async fn extract_1<F, Fut, Res, A>(handler: F, mut ctx: RequestContext) -> Result<Res, RsqError>
+where
+    F: Fn(A) -> Fut,
+    Fut: Future<Output = Result<Res, RsqError>>,
+    A: FromRequest,
+{
+    let a = A::from_request(&mut ctx).await?;
+    handler(a).await
+}
+
+async fn extract_2<F, Fut, Res, A, B>(handler: F, mut ctx: RequestContext) -> Result<Res, RsqError>
+where
+    F: Fn(A, B) -> Fut,
+    Fut: Future<Output = Result<Res, RsqError>>,
+    A: FromRequest,
+    B: FromRequest,
+{
+    let a = A::from_request(&mut ctx).await?;
+    let b = B::from_request(&mut ctx).await?;
+    handler(a, b).await
+}
+
+async fn extract_3<F, Fut, Res, A, B, C>(handler: F, mut ctx: RequestContext) -> Result<Res, RsqError>
+where
+    F: Fn(A, B, C) -> Fut,
+    Fut: Future<Output = Result<Res, RsqError>>,
+    A: FromRequest,
+    B: FromRequest,
+    C: FromRequest,
+{
+    let a = A::from_request(&mut ctx).await?;
+    let b = B::from_request(&mut ctx).await?;
+    let c = C::from_request(&mut ctx).await?;
+    handler(a, b, c).await
+}
+
+async fn extract_4<F, Fut, Res, A, B, C, D>(handler: F, mut ctx: RequestContext) -> Result<Res, RsqError>
+where
+    F: Fn(A, B, C, D) -> Fut,
+    Fut: Future<Output = Result<Res, RsqError>>,
+    A: FromRequest,
+    B: FromRequest,
+    C: FromRequest,
+    D: FromRequest,
+{
+    let a = A::from_request(&mut ctx).await?;
+    let b = B::from_request(&mut ctx).await?;
+    let c = C::from_request(&mut ctx).await?;
+    let d = D::from_request(&mut ctx).await?;
+    handler(a, b, c, d).await
+}
+
 impl<F, Fut, Res, A> Handler<(A,)> for F
 where
     F: Fn(A) -> Fut + Clone + Send + Sync + 'static,
@@ -186,12 +239,8 @@ where
     A: FromRequest + Send + 'static,
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
-        crate::router::Route::new(method, pattern, move |mut ctx| -> Pin<Box<dyn Future<Output = Result<Res, RsqError>> + Send>> {
-            let handler = self.clone();
-            Box::pin(async move {
-                let a = A::from_request(&mut ctx).await?;
-                handler(a).await
-            })
+        crate::router::Route::new(method, pattern, move |ctx| {
+            extract_1(self.clone(), ctx)
         })
     }
 }
@@ -205,13 +254,8 @@ where
     B: FromRequest + Send + 'static,
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
-        crate::router::Route::new(method, pattern, move |mut ctx| -> Pin<Box<dyn Future<Output = Result<Res, RsqError>> + Send>> {
-            let handler = self.clone();
-            Box::pin(async move {
-                let a = A::from_request(&mut ctx).await?;
-                let b = B::from_request(&mut ctx).await?;
-                handler(a, b).await
-            })
+        crate::router::Route::new(method, pattern, move |ctx| {
+            extract_2(self.clone(), ctx)
         })
     }
 }
@@ -226,14 +270,8 @@ where
     C: FromRequest + Send + 'static,
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
-        crate::router::Route::new(method, pattern, move |mut ctx| -> Pin<Box<dyn Future<Output = Result<Res, RsqError>> + Send>> {
-            let handler = self.clone();
-            Box::pin(async move {
-                let a = A::from_request(&mut ctx).await?;
-                let b = B::from_request(&mut ctx).await?;
-                let c = C::from_request(&mut ctx).await?;
-                handler(a, b, c).await
-            })
+        crate::router::Route::new(method, pattern, move |ctx| {
+            extract_3(self.clone(), ctx)
         })
     }
 }
@@ -249,15 +287,8 @@ where
     D: FromRequest + Send + 'static,
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
-        crate::router::Route::new(method, pattern, move |mut ctx| -> Pin<Box<dyn Future<Output = Result<Res, RsqError>> + Send>> {
-            let handler = self.clone();
-            Box::pin(async move {
-                let a = A::from_request(&mut ctx).await?;
-                let b = B::from_request(&mut ctx).await?;
-                let c = C::from_request(&mut ctx).await?;
-                let d = D::from_request(&mut ctx).await?;
-                handler(a, b, c, d).await
-            })
+        crate::router::Route::new(method, pattern, move |ctx| {
+            extract_4(self.clone(), ctx)
         })
     }
 }
