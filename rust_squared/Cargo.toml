@@ -8,7 +8,6 @@ rust-version.workspace = true
 [dependencies]
 async-trait = "0.1"
 async-trait = "0.1"
-async_trait = "0.1"
 tower = "0.5"
 tower-http = { version = "0.5", features = ["trace"] }
 bytes.workspace = true
