@@ -241,7 +241,7 @@ impl RsqApp {
     pub async fn serve_listener(self, listener: TcpListener) -> Result<(), RsqError> {
         let app = Arc::new(self);
         loop {
-            let (stream, _) = listener
+            let (stream, addr) = listener
                 .accept()
                 .await
                 .map_err(|error| RsqError::internal(format!("failed to accept connection: {error}")))?;
@@ -250,7 +250,8 @@ impl RsqApp {
                 let io = TokioIo::new(stream);
                 let service = service_fn(move |request| {
                     let app = Arc::clone(&app);
-                    async move { Ok::<_, std::convert::Infallible>(app.handle_incoming(request).await) }
+                    let addr = addr;
+                    async move { Ok::<_, std::convert::Infallible>(app.handle_incoming_with_addr(request, addr).await) }
                 });
                 if let Err(error) = AutoBuilder::new(TokioExecutor::new())
                     .serve_connection(io, service)
