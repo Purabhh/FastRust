@@ -8,6 +8,7 @@ pub mod openapi;
 pub mod request;
 pub mod response;
 pub mod router;
+pub mod sanitize;
 pub mod schema;
 pub mod state;
 
@@ -17,10 +18,12 @@ pub use app::RsqApp;
 pub use error::RsqError;
 pub use extract::{FromRequest, Handler, Json, Path, Query, State};
 pub use middleware::{
-    BearerAuthMiddleware, CompressionMiddleware, CorsMiddleware, LoggingMiddleware,
-    MaxBodySizeMiddleware, Next, RateLimitMiddleware, RequestIdMiddleware,
-    RequestValidationMiddleware, RsqMiddleware, TimeoutMiddleware,
+    BearerAuthMiddleware, CompressionMiddleware, CorsMiddleware, CsrfMiddleware,
+    LoggingMiddleware, MaxBodySizeMiddleware, Next, RateLimitMiddleware,
+    RequestIdMiddleware, RequestValidationMiddleware, RsqMiddleware,
+    SecurityHeadersMiddleware, TimeoutMiddleware,
 };
+pub use sanitize::{html_escape, is_safe_header_value, strip_null_bytes};
 pub use openapi::{build_spec, openapi_response, swagger_ui_response};
 pub use request::{RequestContext, RsqRequestBody};
 pub use response::{Html, IntoResponse, Response, RsqBody};

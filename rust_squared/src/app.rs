@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -9,6 +11,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
 
 use crate::error::RsqError;
 use crate::extract::Handler;
@@ -180,6 +183,60 @@ impl RsqApp {
             .await
             .map_err(|error| RsqError::internal(format!("failed to bind listener: {error}")))?;
         self.serve_listener(listener).await
+    }
+
+    pub async fn serve_tls(
+        self,
+        addr: SocketAddr,
+        cert_path: impl AsRef<std::path::Path>,
+        key_path: impl AsRef<std::path::Path>,
+    ) -> Result<(), RsqError> {
+        let cert_file = File::open(cert_path.as_ref())
+            .map_err(|e| RsqError::internal(format!("failed to open cert file: {e}")))?;
+        let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
+            .collect::<Result<_, _>>()
+            .map_err(|e| RsqError::internal(format!("failed to parse certs: {e}")))?;
+
+        let key_file = File::open(key_path.as_ref())
+            .map_err(|e| RsqError::internal(format!("failed to open key file: {e}")))?;
+        let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
+            .map_err(|e| RsqError::internal(format!("failed to parse private key: {e}")))?
+            .ok_or_else(|| RsqError::internal("no private key found in file"))?;
+
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .map_err(|e| RsqError::internal(format!("TLS config error: {e}")))?;
+
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+
+        let listener = TcpListener::bind(addr).await
+            .map_err(|e| RsqError::internal(format!("failed to bind listener: {e}")))?;
+
+        let app = Arc::new(self);
+        loop {
+            let (stream, _) = listener.accept().await
+                .map_err(|e| RsqError::internal(format!("failed to accept: {e}")))?;
+            let acceptor = acceptor.clone();
+            let app = Arc::clone(&app);
+            tokio::spawn(async move {
+                let tls_stream = match acceptor.accept(stream).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!("TLS handshake failed: {e}");
+                        return;
+                    }
+                };
+                let io = TokioIo::new(tls_stream);
+                let service = service_fn(move |request| {
+                    let app = Arc::clone(&app);
+                    async move { Ok::<_, std::convert::Infallible>(app.handle_incoming(request).await) }
+                });
+                if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
+                    tracing::error!("connection error: {e}");
+                }
+            });
+        }
     }
 
     pub async fn serve_listener(self, listener: TcpListener) -> Result<(), RsqError> {

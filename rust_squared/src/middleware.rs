@@ -514,6 +514,173 @@ impl RsqMiddleware for RequestValidationMiddleware {
     }
 }
 
+// ── Task 4.2: SecurityHeadersMiddleware ──────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct SecurityHeadersMiddleware {
+    hsts: Option<HeaderValue>,
+    content_type_options: Option<HeaderValue>,
+    frame_options: Option<HeaderValue>,
+    csp: Option<HeaderValue>,
+    xss_protection: Option<HeaderValue>,
+}
+
+impl SecurityHeadersMiddleware {
+    pub fn defaults() -> Self {
+        Self {
+            hsts: Some(HeaderValue::from_static("max-age=63072000; includeSubDomains")),
+            content_type_options: Some(HeaderValue::from_static("nosniff")),
+            frame_options: Some(HeaderValue::from_static("DENY")),
+            csp: Some(HeaderValue::from_static("default-src 'self'")),
+            xss_protection: Some(HeaderValue::from_static("0")),
+        }
+    }
+
+    pub fn hsts(mut self, value: impl Into<Option<HeaderValue>>) -> Self {
+        self.hsts = value.into();
+        self
+    }
+
+    pub fn content_security_policy(mut self, value: impl Into<Option<HeaderValue>>) -> Self {
+        self.csp = value.into();
+        self
+    }
+
+    pub fn frame_options(mut self, value: impl Into<Option<HeaderValue>>) -> Self {
+        self.frame_options = value.into();
+        self
+    }
+}
+
+impl RsqMiddleware for SecurityHeadersMiddleware {
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            let mut response = next.run(ctx).await?;
+            let headers = response.headers_mut();
+            if let Some(ref v) = self.hsts {
+                headers.insert(
+                    http::header::HeaderName::from_static("strict-transport-security"),
+                    v.clone(),
+                );
+            }
+            if let Some(ref v) = self.content_type_options {
+                headers.insert(
+                    http::header::HeaderName::from_static("x-content-type-options"),
+                    v.clone(),
+                );
+            }
+            if let Some(ref v) = self.frame_options {
+                headers.insert(
+                    http::header::HeaderName::from_static("x-frame-options"),
+                    v.clone(),
+                );
+            }
+            if let Some(ref v) = self.csp {
+                headers.insert(
+                    http::header::HeaderName::from_static("content-security-policy"),
+                    v.clone(),
+                );
+            }
+            if let Some(ref v) = self.xss_protection {
+                headers.insert(
+                    http::header::HeaderName::from_static("x-xss-protection"),
+                    v.clone(),
+                );
+            }
+            Ok(response)
+        })
+    }
+}
+
+// ── Task 4.3: CsrfMiddleware ────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct CsrfMiddleware {
+    cookie_name: String,
+    header_name: String,
+    token_length: usize,
+}
+
+impl CsrfMiddleware {
+    pub fn new() -> Self {
+        Self {
+            cookie_name: "csrf_token".to_string(),
+            header_name: "x-csrf-token".to_string(),
+            token_length: 32,
+        }
+    }
+
+    fn generate_token(&self) -> String {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let bytes: Vec<u8> = (0..self.token_length).map(|_| rng.gen::<u8>()).collect();
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn extract_cookie_value<'a>(&self, cookie_header: &'a str) -> Option<&'a str> {
+        for pair in cookie_header.split(';') {
+            let pair = pair.trim();
+            if let Some(value) = pair.strip_prefix(&self.cookie_name) {
+                let value = value.trim_start();
+                if let Some(value) = value.strip_prefix('=') {
+                    return Some(value.trim());
+                }
+            }
+        }
+        None
+    }
+}
+
+impl Default for CsrfMiddleware {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RsqMiddleware for CsrfMiddleware {
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            let is_safe = matches!(
+                *ctx.method(),
+                Method::GET | Method::HEAD | Method::OPTIONS
+            );
+
+            if !is_safe {
+                let cookie_token = ctx
+                    .headers()
+                    .get(http::header::COOKIE)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|cookie_str| self.extract_cookie_value(cookie_str))
+                    .map(String::from);
+
+                let header_token = ctx
+                    .headers()
+                    .get(&self.header_name)
+                    .and_then(|v| v.to_str().ok())
+                    .map(String::from);
+
+                match (cookie_token, header_token) {
+                    (Some(cookie), Some(header)) if cookie == header => {}
+                    _ => {
+                        return Ok((StatusCode::FORBIDDEN, "CSRF token mismatch").into_response());
+                    }
+                }
+            }
+
+            let mut response = next.run(ctx).await?;
+            let token = self.generate_token();
+            let cookie_value = format!(
+                "{}={}; Path=/; SameSite=Strict; HttpOnly",
+                self.cookie_name, token
+            );
+            if let Ok(v) = HeaderValue::from_str(&cookie_value) {
+                response.headers_mut().insert(http::header::SET_COOKIE, v);
+            }
+            Ok(response)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -931,5 +1098,110 @@ mod tests {
             )
             .await;
         assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    // ── SecurityHeaders tests ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn security_headers_defaults_applied() {
+        let app = RsqApp::new()
+            .middleware(SecurityHeadersMiddleware::defaults())
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+        let response = app
+            .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(response.headers()["x-frame-options"], "DENY");
+        assert_eq!(response.headers()["content-security-policy"], "default-src 'self'");
+        assert_eq!(response.headers()["x-xss-protection"], "0");
+    }
+
+    #[tokio::test]
+    async fn security_headers_can_be_customized() {
+        let mw = SecurityHeadersMiddleware::defaults()
+            .frame_options(None);
+        let app = RsqApp::new()
+            .middleware(mw)
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+        let response = app
+            .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        assert!(!response.headers().contains_key("x-frame-options"));
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    }
+
+    // ── CSRF tests ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn csrf_allows_get_without_token() {
+        let app = RsqApp::new()
+            .middleware(CsrfMiddleware::new())
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+        let response = app
+            .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("set-cookie"));
+    }
+
+    #[tokio::test]
+    async fn csrf_rejects_post_without_token() {
+        let app = RsqApp::new()
+            .middleware(CsrfMiddleware::new())
+            .route(Route::new(Method::POST, "/submit", |_| async { Ok("ok") }))
+            .unwrap();
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/submit")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn csrf_allows_post_with_matching_token() {
+        let app = RsqApp::new()
+            .middleware(CsrfMiddleware::new())
+            .route(Route::new(Method::POST, "/submit", |_| async { Ok("ok") }))
+            .unwrap();
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/submit")
+                    .header("cookie", "csrf_token=abc123")
+                    .header("x-csrf-token", "abc123")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn csrf_rejects_post_with_mismatched_token() {
+        let app = RsqApp::new()
+            .middleware(CsrfMiddleware::new())
+            .route(Route::new(Method::POST, "/submit", |_| async { Ok("ok") }))
+            .unwrap();
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/submit")
+                    .header("cookie", "csrf_token=abc")
+                    .header("x-csrf-token", "xyz")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

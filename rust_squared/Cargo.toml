@@ -21,6 +21,10 @@ tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 flate2.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+rand.workspace = true
 rust_squared_macros = { path = "../rust_squared_macros" }
 
 [dev-dependencies]

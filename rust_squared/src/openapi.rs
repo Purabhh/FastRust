@@ -70,7 +70,13 @@ pub fn build_spec(routes: &[Route], schemas: &HashMap<String, Value>) -> Value {
         if !route.meta().tags().is_empty() {
             operation.insert("tags".into(), json!(route.meta().tags()));
         }
-        operation.insert("responses".into(), json!({ "200": success_response }));
+        let mut responses = serde_json::Map::new();
+        responses.insert("200".into(), success_response);
+        responses.insert("400".into(), json!({ "description": "Bad Request" }));
+        responses.insert("401".into(), json!({ "description": "Unauthorized" }));
+        responses.insert("404".into(), json!({ "description": "Not Found" }));
+        responses.insert("500".into(), json!({ "description": "Internal Server Error" }));
+        operation.insert("responses".into(), Value::Object(responses));
         if !parameters.is_empty() {
             operation.insert("parameters".into(), json!(parameters));
         }
