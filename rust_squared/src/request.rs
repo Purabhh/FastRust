@@ -18,16 +18,18 @@ pub struct RequestContext {
     body: RsqRequestBody,
     path_params: PathParams,
     state: AppState,
+    peer_addr: Option<SocketAddr>,
     max_body_size: usize,
 }
 
 impl RequestContext {
-    pub fn new(parts: Parts, body: RsqRequestBody, path_params: PathParams, state: AppState) -> Self {
+    pub fn new(parts: Parts, body: RsqRequestBody, path_params: PathParams, state: AppState, peer_addr: Option<SocketAddr>) -> Self {
         Self {
             parts,
             body,
             path_params,
             state,
+            peer_addr,
             max_body_size: 1024 * 1024,
         }
     }
@@ -51,6 +53,7 @@ impl RequestContext {
             RsqRequestBody::Buffered(collected.to_bytes()),
             path_params,
             state,
+            None,
         ))
     }
 
@@ -58,9 +61,10 @@ impl RequestContext {
         request: http::Request<Incoming>,
         path_params: PathParams,
         state: AppState,
+        peer_addr: Option<SocketAddr>,
     ) -> Self {
         let (parts, body) = request.into_parts();
-        Self::new(parts, RsqRequestBody::Streaming(body), path_params, state)
+        Self::new(parts, RsqRequestBody::Streaming(body), path_params, state, peer_addr)
     }
 
     pub fn method(&self) -> &Method {
