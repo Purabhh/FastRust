@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use async_trait::async_trait;
+
 use crate::error::RsqError;
 use crate::extract::FromRequest;
 use crate::request::RequestContext;
@@ -32,11 +34,9 @@ impl CookieJar {
     }
 }
 
+#[async_trait]
 impl FromRequest for CookieJar {
-    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
-    where
-        Self: 'a,
-    {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
         let header = match ctx.headers().get(http::header::COOKIE) {
             Some(h) => h,
             None => return Ok(Self(HashMap::new())),

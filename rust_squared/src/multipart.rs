@@ -2,6 +2,7 @@
 //!
 //! Extracts form fields and file uploads from multipart request bodies.
 
+use async_trait::async_trait;
 use bytes::Bytes;
 
 use crate::error::RsqError;
@@ -60,11 +61,9 @@ impl Multipart {
     }
 }
 
+#[async_trait]
 impl FromRequest for Multipart {
-    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
-    where
-        Self: 'a,
-    {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
         Multipart::from_request(ctx).await
     }
 }

@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use async_trait::async_trait;
 use futures_util::future::BoxFuture;
 use http::header::CONTENT_TYPE;
 use serde::Serialize;
@@ -11,10 +12,9 @@ use crate::error::RsqError;
 use crate::request::RequestContext;
 use crate::response::{IntoResponse, Response};
 
+#[async_trait]
 pub trait FromRequest: Sized + Send {
-    fn from_request<'a>(ctx: &'a mut RequestContext) -> impl Future<Output = Result<Self, RsqError>> + Send + 'a
-    where
-        Self: 'a;
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError>;
 }
 
 pub struct Path<T>(pub T);
@@ -25,14 +25,12 @@ impl<T> Path<T> {
     }
 }
 
+#[async_trait]
 impl<T> FromRequest for Path<T>
 where
     T: DeserializeOwned + Send,
 {
-    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
-    where
-        Self: 'a,
-    {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
         let encoded = ctx
             .path_params()
             .iter()
@@ -60,14 +58,12 @@ impl<T> Query<T> {
     }
 }
 
+#[async_trait]
 impl<T> FromRequest for Query<T>
 where
     T: DeserializeOwned + Send,
 {
-    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
-    where
-        Self: 'a,
-    {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
         let raw = ctx.uri().query().unwrap_or_default();
         let value = serde_urlencoded::from_str(raw)
             .map_err(|error| RsqError::unprocessable_entity(format!("invalid query string: {error}")))?;
@@ -83,14 +79,12 @@ impl<T> Json<T> {
     }
 }
 
+#[async_trait]
 impl<T> FromRequest for Json<T>
 where
     T: DeserializeOwned + Send,
 {
-    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
-    where
-        Self: 'a,
-    {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
         let is_json = ctx
             .headers()
             .get(CONTENT_TYPE)
@@ -142,14 +136,12 @@ impl<T> State<T> {
     }
 }
 
+#[async_trait]
 impl<T> FromRequest for State<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
-    where
-        Self: 'a,
-    {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
         let value = ctx.state().get::<T>().ok_or_else(|| {
             RsqError::internal(format!(
                 "state for `{}` is not registered",
