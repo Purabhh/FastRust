@@ -39,6 +39,31 @@ pub fn options(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_route_macro("OPTIONS", attr, item)
 }
 
+#[proc_macro_attribute]
+pub fn put(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_route_macro("PUT", attr, item)
+}
+
+#[proc_macro_attribute]
+pub fn delete(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_route_macro("DELETE", attr, item)
+}
+
+#[proc_macro_attribute]
+pub fn patch(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_route_macro("PATCH", attr, item)
+}
+
+#[proc_macro_attribute]
+pub fn head(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_route_macro("HEAD", attr, item)
+}
+
+#[proc_macro_attribute]
+pub fn options(attr: TokenStream, item: TokenStream) -> TokenStream {
+    expand_route_macro("OPTIONS", attr, item)
+}
+
 #[proc_macro_derive(RsqSchema)]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
