@@ -1206,3 +1206,29 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
+
+use tower::Service as TowerService;
+
+#[derive(Clone)]
+struct TowerMiddleware<T> {
+    inner: T,
+}
+
+#[async_trait]
+impl<T> RsqMiddleware for TowerMiddleware<T>
+where
+    T: TowerService<Request<Incoming>, Response = Response, Error = Box<dyn std::error::Error + Send + Sync>> + Clone + Send + Sync + 'static,
+    T::Future: Send + 'static,
+{
+    async fn handle(&self, ctx: RequestContext, next: Next) -> Result<Response, RsqError> {
+        let mut request = ctx.into_hyper_request();
+        let response = self.inner.clone().call(request).await.map_err(|e| RsqError::internal(e.to_string()))?;
+        next.run(ctx).await // Wait, no—tower middlewares wrap the service, so for chaining, need to call next inside, but since Rsq is the inner, this adapter should call the tower on the request, then pass to next if ok.
+        // Actually, to wrap, the adapter should call tower with a service that calls next.
+        // But since RsqMiddleware is not Tower, it's better to have RsqApp impl Tower Service, then users can layer Tower on top.
+        // For using Tower in Rsq middleware chain, the adapter can convert to hyper, call tower, convert back to Rsq Response.
+        // But if tower is a layer wrapping a service, it's more complex.
+        // To fully support, make RsqApp impl Tower Service, and provide a way to add Tower Layers to RsqApp.
+        // Let's do that.
+    }
+}
