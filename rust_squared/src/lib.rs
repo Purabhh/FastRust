@@ -1,6 +1,7 @@
 extern crate self as rust_squared;
 
 pub mod app;
+pub mod cookie;
 pub mod error;
 pub mod extract;
 pub mod middleware;
@@ -12,6 +13,7 @@ pub mod multipart;
 pub mod sanitize;
 pub mod schema;
 pub mod sse;
+pub mod static_files;
 pub mod ws;
 pub mod state;
 
@@ -26,7 +28,9 @@ pub use middleware::{
     RequestIdMiddleware, RequestValidationMiddleware, RsqMiddleware,
     SecurityHeadersMiddleware, TimeoutMiddleware,
 };
+pub use cookie::{CookieJar, set_cookie, set_cookie_with};
 pub use sanitize::{html_escape, is_safe_header_value, strip_null_bytes};
+pub use static_files::StaticFiles;
 pub use openapi::{build_spec, openapi_response, swagger_ui_response};
 pub use request::{RequestContext, RsqRequestBody};
 pub use response::{Html, IntoResponse, Response, RsqBody};
