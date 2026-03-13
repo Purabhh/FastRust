@@ -16,7 +16,11 @@ pub use serde_json;
 pub use app::RsqApp;
 pub use error::RsqError;
 pub use extract::{FromRequest, Handler, Json, Path, Query, State};
-pub use middleware::{BearerAuthMiddleware, CorsMiddleware, LoggingMiddleware, Next, RsqMiddleware};
+pub use middleware::{
+    BearerAuthMiddleware, CompressionMiddleware, CorsMiddleware, LoggingMiddleware,
+    MaxBodySizeMiddleware, Next, RateLimitMiddleware, RequestIdMiddleware,
+    RequestValidationMiddleware, RsqMiddleware, TimeoutMiddleware,
+};
 pub use openapi::{build_spec, openapi_response, swagger_ui_response};
 pub use request::{RequestContext, RsqRequestBody};
 pub use response::{Html, IntoResponse, Response, RsqBody};

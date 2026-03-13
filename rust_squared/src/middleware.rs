@@ -1,9 +1,14 @@
+use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
+use std::time::Duration;
 
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use futures_util::future::BoxFuture;
 use http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-    AUTHORIZATION,
+    AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
 };
 use http::{HeaderValue, Method, StatusCode};
 
@@ -182,6 +187,333 @@ fn apply_cors_headers(
         .insert(ACCESS_CONTROL_ALLOW_HEADERS, allow_headers.clone());
 }
 
+// ── Task 2.1: TimeoutMiddleware ──────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct TimeoutMiddleware {
+    duration: Duration,
+}
+
+impl TimeoutMiddleware {
+    pub fn new(duration: Duration) -> Self {
+        Self { duration }
+    }
+}
+
+impl RsqMiddleware for TimeoutMiddleware {
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            match tokio::time::timeout(self.duration, next.run(ctx)).await {
+                Ok(result) => result,
+                Err(_) => Ok((StatusCode::GATEWAY_TIMEOUT, "request timed out").into_response()),
+            }
+        })
+    }
+}
+
+// ── Task 2.2: RequestIdMiddleware ────────────────────────────────────────────
+
+#[derive(Clone, Debug, Default)]
+pub struct RequestIdMiddleware;
+
+impl RequestIdMiddleware {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl RsqMiddleware for RequestIdMiddleware {
+    fn handle<'a>(&'a self, mut ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            let request_id = ctx
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+            let header_value = HeaderValue::from_str(&request_id)
+                .unwrap_or_else(|_| HeaderValue::from_static("invalid"));
+
+            ctx.headers_mut().insert(
+                http::header::HeaderName::from_static("x-request-id"),
+                header_value.clone(),
+            );
+
+            let mut response = next.run(ctx).await?;
+            response.headers_mut().insert(
+                http::header::HeaderName::from_static("x-request-id"),
+                header_value,
+            );
+            Ok(response)
+        })
+    }
+}
+
+// ── Task 2.3: RateLimitMiddleware ────────────────────────────────────────────
+
+struct TokenBucket {
+    tokens: f64,
+    last_refill: std::time::Instant,
+    rate: f64,
+    burst: f64,
+}
+
+impl TokenBucket {
+    fn new(rate: f64, burst: f64) -> Self {
+        Self {
+            tokens: burst,
+            last_refill: std::time::Instant::now(),
+            rate,
+            burst,
+        }
+    }
+
+    fn try_consume(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.rate).min(self.burst);
+        self.last_refill = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct RateLimitMiddleware {
+    requests_per_second: f64,
+    burst_size: f64,
+    buckets: Arc<std::sync::Mutex<HashMap<String, TokenBucket>>>,
+}
+
+impl RateLimitMiddleware {
+    pub fn new(requests_per_second: f64, burst_size: usize) -> Self {
+        Self {
+            requests_per_second,
+            burst_size: burst_size as f64,
+            buckets: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl std::fmt::Debug for RateLimitMiddleware {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RateLimitMiddleware")
+            .field("requests_per_second", &self.requests_per_second)
+            .field("burst_size", &self.burst_size)
+            .finish()
+    }
+}
+
+impl RsqMiddleware for RateLimitMiddleware {
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            let key = ctx
+                .headers()
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let allowed = {
+                let mut buckets = self.buckets.lock().expect("rate limit lock poisoned");
+                let bucket = buckets
+                    .entry(key)
+                    .or_insert_with(|| TokenBucket::new(self.requests_per_second, self.burst_size));
+                bucket.try_consume()
+            };
+
+            if !allowed {
+                let mut response = (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded").into_response();
+                response.headers_mut().insert(
+                    http::header::HeaderName::from_static("retry-after"),
+                    HeaderValue::from_static("1"),
+                );
+                return Ok(response);
+            }
+
+            next.run(ctx).await
+        })
+    }
+}
+
+// ── Task 2.4: CompressionMiddleware ──────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct CompressionMiddleware {
+    min_size: usize,
+}
+
+impl CompressionMiddleware {
+    pub fn new() -> Self {
+        Self { min_size: 256 }
+    }
+
+    pub fn min_size(mut self, min_size: usize) -> Self {
+        self.min_size = min_size;
+        self
+    }
+}
+
+impl Default for CompressionMiddleware {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RsqMiddleware for CompressionMiddleware {
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            let accepts_gzip = ctx
+                .headers()
+                .get(http::header::ACCEPT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.contains("gzip"))
+                .unwrap_or(false);
+
+            let response = next.run(ctx).await?;
+
+            if !accepts_gzip {
+                return Ok(response);
+            }
+
+            // Collect the response body to check size
+            let (parts, body) = response.into_parts();
+            let body_bytes = http_body_util::BodyExt::collect(body)
+                .await
+                .map_err(|e| RsqError::internal(format!("failed to collect response body: {e}")))?
+                .to_bytes();
+
+            if body_bytes.len() < self.min_size {
+                let rebuilt = http::Response::from_parts(
+                    parts,
+                    http_body_util::Full::new(body_bytes),
+                );
+                return Ok(rebuilt);
+            }
+
+            // Compress with gzip
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+            encoder
+                .write_all(&body_bytes)
+                .map_err(|e| RsqError::internal(format!("gzip compression failed: {e}")))?;
+            let compressed = encoder
+                .finish()
+                .map_err(|e| RsqError::internal(format!("gzip finalize failed: {e}")))?;
+
+            let mut rebuilt = http::Response::from_parts(
+                parts,
+                http_body_util::Full::new(bytes::Bytes::from(compressed)),
+            );
+            rebuilt.headers_mut().insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+            rebuilt.headers_mut().remove(CONTENT_LENGTH);
+            Ok(rebuilt)
+        })
+    }
+}
+
+// ── Task 2.5: MaxBodySizeMiddleware ──────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct MaxBodySizeMiddleware {
+    max_bytes: usize,
+}
+
+impl MaxBodySizeMiddleware {
+    pub fn new(max_bytes: usize) -> Self {
+        Self { max_bytes }
+    }
+}
+
+impl RsqMiddleware for MaxBodySizeMiddleware {
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            if let Some(content_length) = ctx.headers().get(CONTENT_LENGTH) {
+                if let Ok(len_str) = content_length.to_str() {
+                    if let Ok(len) = len_str.parse::<usize>() {
+                        if len > self.max_bytes {
+                            return Ok((
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                format!("payload exceeds {} byte limit", self.max_bytes),
+                            )
+                                .into_response());
+                        }
+                    }
+                }
+            }
+            next.run(ctx).await
+        })
+    }
+}
+
+// ── Task 2.6: RequestValidationMiddleware ────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct RequestValidationMiddleware {
+    allowed_content_types: Vec<String>,
+}
+
+impl RequestValidationMiddleware {
+    pub fn new(allowed_content_types: Vec<String>) -> Self {
+        Self {
+            allowed_content_types,
+        }
+    }
+
+    pub fn json_only() -> Self {
+        Self {
+            allowed_content_types: vec!["application/json".to_string()],
+        }
+    }
+}
+
+impl RsqMiddleware for RequestValidationMiddleware {
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            let needs_content_type = matches!(
+                *ctx.method(),
+                Method::POST | Method::PUT | Method::PATCH
+            );
+
+            if needs_content_type {
+                let content_type = ctx
+                    .headers()
+                    .get(CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok());
+
+                match content_type {
+                    None => {
+                        return Ok((
+                            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                            "Content-Type header is required",
+                        )
+                            .into_response());
+                    }
+                    Some(ct) => {
+                        let ct_lower = ct.to_ascii_lowercase();
+                        let matched = self.allowed_content_types.iter().any(|allowed| {
+                            ct_lower.starts_with(allowed)
+                        });
+                        if !matched {
+                            return Ok((
+                                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                                format!("Content-Type '{}' is not allowed", ct),
+                            )
+                                .into_response());
+                        }
+                    }
+                }
+            }
+
+            next.run(ctx).await
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -193,7 +525,9 @@ mod tests {
     use http_body_util::Full;
     use tokio::sync::Mutex;
 
-    use super::{BearerAuthMiddleware, CorsMiddleware, LoggingMiddleware, Next, RsqMiddleware};
+    use std::time::Duration;
+
+    use super::*;
     use crate::RsqApp;
     use crate::request::{RequestContext, RsqRequestBody};
     use crate::router::Route;
@@ -316,5 +650,286 @@ mod tests {
             .await;
 
         assert_eq!(response.headers()["x-fastrust-logged"], "true");
+    }
+
+    // ── Timeout tests ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn timeout_allows_fast_requests() {
+        let app = RsqApp::new()
+            .middleware(TimeoutMiddleware::new(Duration::from_secs(5)))
+            .route(Route::new(Method::GET, "/", |_| async { Ok("fast") }))
+            .unwrap();
+
+        let response = app
+            .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn timeout_returns_504_on_slow_handler() {
+        let app = RsqApp::new()
+            .middleware(TimeoutMiddleware::new(Duration::from_millis(10)))
+            .route(Route::new(Method::GET, "/slow", |_| async {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                Ok::<_, crate::RsqError>("slow")
+            }))
+            .unwrap();
+
+        let response = app
+            .handle(Request::builder().uri("/slow").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    }
+
+    // ── RequestId tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn request_id_generates_uuid() {
+        let app = RsqApp::new()
+            .middleware(RequestIdMiddleware::new())
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        let id = response.headers().get("x-request-id").expect("should have x-request-id");
+        assert!(!id.is_empty());
+        // UUID v4 format: 8-4-4-4-12 hex chars
+        assert_eq!(id.to_str().unwrap().len(), 36);
+    }
+
+    #[tokio::test]
+    async fn request_id_preserves_existing() {
+        let app = RsqApp::new()
+            .middleware(RequestIdMiddleware::new())
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .uri("/")
+                    .header("x-request-id", "my-custom-id")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.headers()["x-request-id"], "my-custom-id");
+    }
+
+    // ── RateLimit tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn rate_limit_allows_within_burst() {
+        let app = RsqApp::new()
+            .middleware(RateLimitMiddleware::new(10.0, 5))
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+
+        for _ in 0..5 {
+            let response = app
+                .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+                .await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_limit_returns_429_when_exceeded() {
+        let app = RsqApp::new()
+            .middleware(RateLimitMiddleware::new(1.0, 2))
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+
+        // Use up the burst
+        let _ = app.handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap()).await;
+        let _ = app.handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap()).await;
+
+        // Third request should be rate-limited
+        let response = app
+            .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(response.headers().contains_key("retry-after"));
+    }
+
+    // ── Compression tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn compression_skips_small_responses() {
+        let app = RsqApp::new()
+            .middleware(CompressionMiddleware::new())
+            .route(Route::new(Method::GET, "/", |_| async { Ok("small") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .uri("/")
+                    .header("accept-encoding", "gzip")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert!(!response.headers().contains_key("content-encoding"));
+    }
+
+    #[tokio::test]
+    async fn compression_gzips_large_responses() {
+        let large_body = "x".repeat(1000);
+        let app = RsqApp::new()
+            .middleware(CompressionMiddleware::new())
+            .route(Route::new(Method::GET, "/big", move |_| {
+                let body = large_body.clone();
+                async move { Ok::<_, crate::RsqError>(body) }
+            }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .uri("/big")
+                    .header("accept-encoding", "gzip")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.headers()["content-encoding"], "gzip");
+    }
+
+    #[tokio::test]
+    async fn compression_skips_without_accept_encoding() {
+        let large_body = "x".repeat(1000);
+        let app = RsqApp::new()
+            .middleware(CompressionMiddleware::new())
+            .route(Route::new(Method::GET, "/big", move |_| {
+                let body = large_body.clone();
+                async move { Ok::<_, crate::RsqError>(body) }
+            }))
+            .unwrap();
+
+        let response = app
+            .handle(Request::builder().uri("/big").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        assert!(!response.headers().contains_key("content-encoding"));
+    }
+
+    // ── MaxBodySize tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn max_body_size_allows_small_payload() {
+        let app = RsqApp::new()
+            .middleware(MaxBodySizeMiddleware::new(1024))
+            .route(Route::new(Method::POST, "/upload", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/upload")
+                    .header("content-length", "100")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn max_body_size_rejects_large_payload() {
+        let app = RsqApp::new()
+            .middleware(MaxBodySizeMiddleware::new(1024))
+            .route(Route::new(Method::POST, "/upload", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/upload")
+                    .header("content-length", "999999")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    // ── RequestValidation tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn validation_allows_get_without_content_type() {
+        let app = RsqApp::new()
+            .middleware(RequestValidationMiddleware::json_only())
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn validation_rejects_post_without_content_type() {
+        let app = RsqApp::new()
+            .middleware(RequestValidationMiddleware::json_only())
+            .route(Route::new(Method::POST, "/data", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/data")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn validation_allows_post_with_valid_content_type() {
+        let app = RsqApp::new()
+            .middleware(RequestValidationMiddleware::json_only())
+            .route(Route::new(Method::POST, "/data", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/data")
+                    .header("content-type", "application/json")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn validation_rejects_post_with_wrong_content_type() {
+        let app = RsqApp::new()
+            .middleware(RequestValidationMiddleware::json_only())
+            .route(Route::new(Method::POST, "/data", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/data")
+                    .header("content-type", "text/plain")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 }
