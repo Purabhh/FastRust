@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: 1.85.0
+        override: true
+
+    - name: Check
+      run: cargo check --workspace
+
+    - name: Test
+      run: cargo test --workspace
+
+    - name: Clippy
+      run: cargo clippy --workspace -- -D warnings
