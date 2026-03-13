@@ -5,6 +5,7 @@
 use bytes::Bytes;
 
 use crate::error::RsqError;
+use crate::extract::FromRequest;
 use crate::request::RequestContext;
 
 /// A single part of a multipart form submission.
@@ -56,6 +57,15 @@ impl Multipart {
 
         let body = ctx.take_body_bytes().await?;
         parse_multipart(&body, &boundary)
+    }
+}
+
+impl FromRequest for Multipart {
+    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
+    where
+        Self: 'a,
+    {
+        Multipart::from_request(ctx).await
     }
 }
 
