@@ -302,3 +302,39 @@ fn sanitization_integration() {
     assert!(rust_squared::is_safe_header_value("normal-value"));
     assert_eq!(rust_squared::strip_null_bytes("a\0b\0c"), "abc");
 }
+
+// ── E7: peer_addr() returns the real remote address ─────────────────
+
+#[test]
+fn peer_addr_returns_real_address() {
+    use std::net::SocketAddr;
+    use rust_squared::{RequestContext, RsqRequestBody};
+    use rust_squared::router::Route;
+    use rust_squared::AppState;
+
+    let expected: SocketAddr = "192.0.2.1:54321".parse().unwrap();
+
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri("/")
+        .body(())
+        .unwrap();
+    let (parts, _) = request.into_parts();
+
+    let route = Route::new(Method::GET, "/", |_| async { Ok::<_, rust_squared::RsqError>("ok") });
+    let _ = route; // only needed to satisfy PathParams type
+
+    let ctx = RequestContext::new(
+        parts,
+        RsqRequestBody::Buffered(Bytes::new()),
+        Default::default(),
+        AppState::new(),
+        Some(expected),
+    );
+
+    assert_eq!(
+        ctx.peer_addr(),
+        Some(expected),
+        "peer_addr() must return the socket address supplied at construction"
+    );
+}

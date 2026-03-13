@@ -195,7 +195,7 @@ FastRust currently includes:
 - `RsqApp` builder with `get`, `post`, and direct route registration
 - typed extractors: `Path<T>`, `Query<T>`, `Json<T>`, `State<T>`
 - JSON request parsing and JSON response serialization
-- route macros: `#[get(...)]`, `#[post(...)]`
+- route macros: `#[get(...)]`, `#[post(...)]`, `#[put(...)]`, `#[patch(...)]`, `#[delete(...)]`, `#[head(...)]`, `#[options(...)]`
 - route metadata: `summary`, `description`, `operation_id`, `tag`
 - middleware system with onion-style chaining
 - built-in middleware:
@@ -317,9 +317,12 @@ Implemented:
 Still evolving:
 
 - richer schema generation for request/response models
-- more HTTP method macros (`put`, `patch`, `delete`)
 - more polished CLI support
 - stronger docs/export workflows
+
+Already implemented (available now):
+
+- HTTP method macros: `put`, `patch`, `delete`, `head`, `options` — all exported from `rust_squared`
 
 ## Why Build Directly on Hyper
 

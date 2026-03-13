@@ -314,11 +314,15 @@ impl RsqMiddleware for RateLimitMiddleware {
     fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
             let key = ctx
-                .headers()
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .map(String::from)
-                .unwrap_or_else(|| "unknown".to_string());
+                .peer_addr()
+                .map(|addr| addr.ip().to_string())
+                .or_else(|| {
+                    ctx.headers()
+                        .get("x-forwarded-for")
+                        .and_then(|v| v.to_str().ok())
+                        .map(String::from)
+                })
+                .unwrap_or_else(|| "0.0.0.0".to_string());
 
             let allowed = {
                 let mut buckets = self.buckets.lock().expect("rate limit lock poisoned");
@@ -432,20 +436,23 @@ impl MaxBodySizeMiddleware {
 
 impl RsqMiddleware for MaxBodySizeMiddleware {
     fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
+        let max_bytes = self.max_bytes;
         Box::pin(async move {
             if let Some(content_length) = ctx.headers().get(CONTENT_LENGTH) {
                 if let Ok(len_str) = content_length.to_str() {
                     if let Ok(len) = len_str.parse::<usize>() {
-                        if len > self.max_bytes {
+                        if len > max_bytes {
                             return Ok((
                                 StatusCode::PAYLOAD_TOO_LARGE,
-                                format!("payload exceeds {} byte limit", self.max_bytes),
+                                format!("payload exceeds {} byte limit", max_bytes),
                             )
                                 .into_response());
                         }
                     }
                 }
             }
+            let mut ctx = ctx;
+            ctx.set_max_body_size(max_bytes);
             next.run(ctx).await
         })
     }
@@ -497,7 +504,7 @@ impl RsqMiddleware for RequestValidationMiddleware {
                     Some(ct) => {
                         let ct_lower = ct.to_ascii_lowercase();
                         let matched = self.allowed_content_types.iter().any(|allowed| {
-                            ct_lower.starts_with(allowed)
+                            ct_lower == *allowed || ct_lower.starts_with(&format!("{allowed};"))
                         });
                         if !matched {
                             return Ok((
@@ -673,13 +680,15 @@ impl RsqMiddleware for CsrfMiddleware {
             }
 
             let mut response = next.run(ctx).await?;
-            let token = self.generate_token();
-            let cookie_value = format!(
-                "{}={}; Path=/; SameSite=Strict; HttpOnly",
-                self.cookie_name, token
-            );
-            if let Ok(v) = HeaderValue::from_str(&cookie_value) {
-                response.headers_mut().insert(http::header::SET_COOKIE, v);
+            if is_safe {
+                let token = self.generate_token();
+                let cookie_value = format!(
+                    "{}={}; Path=/; SameSite=Strict; Secure",
+                    self.cookie_name, token
+                );
+                if let Ok(v) = HeaderValue::from_str(&cookie_value) {
+                    response.headers_mut().insert(http::header::SET_COOKIE, v);
+                }
             }
             Ok(response)
         })
@@ -1209,6 +1218,216 @@ mod tests {
             )
             .await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ── A1 regression: chunked/no-Content-Length body exceeding limit ────
+
+    #[tokio::test]
+    async fn max_body_size_rejects_large_body_without_content_length() {
+        // Handler calls take_body_bytes() to trigger the size check.
+        let app = RsqApp::new()
+            .middleware(MaxBodySizeMiddleware::new(10))
+            .route(Route::new(Method::POST, "/upload", |mut ctx: RequestContext| async move {
+                ctx.take_body_bytes().await?;
+                Ok("ok")
+            }))
+            .unwrap();
+
+        // Send 11 bytes with no Content-Length header — only streaming check enforces limit.
+        let big_body = Bytes::from(vec![b'x'; 11]);
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/upload")
+                    .body(Full::new(big_body))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    // ── A2 regression: CSRF cookie flags ────────────────────────────────
+
+    #[tokio::test]
+    async fn csrf_cookie_has_secure_not_httponly_and_only_on_get() {
+        let app = RsqApp::new()
+            .middleware(CsrfMiddleware::new())
+            .route(Route::new(Method::GET, "/", |_| async { Ok::<_, crate::RsqError>("ok") }))
+            .unwrap()
+            .route(Route::new(Method::POST, "/submit", |_| async { Ok::<_, crate::RsqError>("ok") }))
+            .unwrap();
+
+        // GET: cookie should be set, contain Secure, not contain HttpOnly.
+        let get_response: Response = app
+            .handle(Request::builder().uri("/").body(Full::new(Bytes::new())).unwrap())
+            .await;
+        let cookie = get_response
+            .headers()
+            .get("set-cookie")
+            .expect("cookie must be set on GET")
+            .to_str()
+            .unwrap();
+        assert!(cookie.contains("Secure"), "cookie must contain Secure");
+        assert!(!cookie.contains("HttpOnly"), "cookie must NOT contain HttpOnly");
+
+        // POST: cookie must NOT be set (double-submit flow; JS already holds it).
+        let post_response: Response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/submit")
+                    .header("cookie", "csrf_token=abc123")
+                    .header("x-csrf-token", "abc123")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert!(
+            !post_response.headers().contains_key("set-cookie"),
+            "cookie must NOT be set on POST"
+        );
+    }
+
+    // ── A3 regression: rate limiter key prefers peer_addr ───────────────
+
+    #[tokio::test]
+    async fn rate_limit_uses_peer_addr_not_x_forwarded_for() {
+        use std::net::SocketAddr;
+
+        let mw = RateLimitMiddleware::new(10.0, 2);
+        let route = Route::new(Method::GET, "/", |_| async { Ok::<_, crate::RsqError>("ok") });
+
+        let make_ctx = |peer: Option<SocketAddr>, xff: &'static str| {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("/")
+                .header("x-forwarded-for", xff)
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            RequestContext::new(
+                parts,
+                RsqRequestBody::Buffered(Bytes::new()),
+                Default::default(),
+                AppState::new(),
+                peer,
+            )
+        };
+
+        let peer_a: SocketAddr = "1.2.3.4:1234".parse().unwrap();
+        let peer_b: SocketAddr = "5.6.7.8:5678".parse().unwrap();
+
+        // Exhaust peer_a's burst (size 2).
+        let r1 = mw.handle(make_ctx(Some(peer_a), "9.9.9.9"), Next::new(Arc::new(Vec::new()), route.clone())).await.unwrap();
+        let r2 = mw.handle(make_ctx(Some(peer_a), "9.9.9.9"), Next::new(Arc::new(Vec::new()), route.clone())).await.unwrap();
+        let r3 = mw.handle(make_ctx(Some(peer_a), "9.9.9.9"), Next::new(Arc::new(Vec::new()), route.clone())).await.unwrap();
+        assert_eq!(r1.status(), StatusCode::OK);
+        assert_eq!(r2.status(), StatusCode::OK);
+        // Third request from peer_a must be rate-limited.
+        assert_eq!(r3.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // peer_b (different IP, same XFF) should still be allowed.
+        let r4 = mw.handle(make_ctx(Some(peer_b), "9.9.9.9"), Next::new(Arc::new(Vec::new()), route.clone())).await.unwrap();
+        assert_eq!(r4.status(), StatusCode::OK);
+    }
+
+    // ── A4 regression: application/jsonp must be rejected ───────────────
+
+    #[tokio::test]
+    async fn validation_rejects_application_jsonp() {
+        let app = RsqApp::new()
+            .middleware(RequestValidationMiddleware::json_only())
+            .route(Route::new(Method::POST, "/data", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/data")
+                    .header("content-type", "application/jsonp")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn validation_allows_application_json_with_charset_param() {
+        let app = RsqApp::new()
+            .middleware(RequestValidationMiddleware::json_only())
+            .route(Route::new(Method::POST, "/data", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/data")
+                    .header("content-type", "application/json; charset=utf-8")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── E2 regression: configured limit below 1 MiB honored during Json extraction ──
+
+    #[tokio::test]
+    async fn max_body_size_below_default_enforced_for_json_extraction() {
+
+        // Allow only 32 bytes — well below the 1 MiB default.
+        let app = RsqApp::new()
+            .middleware(MaxBodySizeMiddleware::new(32))
+            .route(Route::new(
+                Method::POST,
+                "/json",
+                |mut ctx: RequestContext| async move {
+                    // Trigger body reading via the Json extractor path.
+                    ctx.take_body_bytes().await?;
+                    Ok("ok")
+                },
+            ))
+            .unwrap();
+
+        // 33-byte body exceeds the 32-byte configured limit.
+        let over_limit = Bytes::from(vec![b'a'; 33]);
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/json")
+                    .header("content-type", "application/json")
+                    .body(Full::new(over_limit))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "body exceeding configured sub-1MiB limit must be rejected"
+        );
+
+        // A body within the limit must succeed.
+        let within_limit = Bytes::from(vec![b'b'; 10]);
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/json")
+                    .header("content-type", "application/json")
+                    .body(Full::new(within_limit))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "body within configured limit must be accepted"
+        );
     }
 }
 

@@ -119,11 +119,11 @@ pub fn swagger_ui_response(spec_path: &str) -> Html {
   <head>
     <meta charset="utf-8">
     <title>FastRust Docs</title>
-    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" crossorigin="anonymous">
   </head>
   <body>
     <div id="swagger-ui"></div>
-    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin="anonymous"></script>
     <script>
       window.ui = SwaggerUIBundle({{
         url: "{spec_path}",

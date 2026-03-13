@@ -284,14 +284,15 @@ impl RsqApp {
         loop {
             tokio::select! {
                 result = listener.accept() => {
-                    let (stream, _) = result
+                    let (stream, addr) = result
                         .map_err(|e| RsqError::internal(format!("failed to accept: {e}")))?;
                     let app = Arc::clone(&app);
                     let handle = tokio::spawn(async move {
                         let io = TokioIo::new(stream);
                         let service = service_fn(move |request| {
                             let app = Arc::clone(&app);
-                            async move { Ok::<_, std::convert::Infallible>(app.handle_incoming(request).await) }
+                            let addr = addr;
+                            async move { Ok::<_, std::convert::Infallible>(app.handle_incoming_with_addr(request, addr).await) }
                         });
                         if let Err(e) = AutoBuilder::new(TokioExecutor::new())
                             .serve_connection(io, service)

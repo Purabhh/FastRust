@@ -1,21 +1,25 @@
 //! WebSocket upgrade support for FastRust.
 //!
-//! Provides WebSocket upgrade detection and a handler interface.
-//! Uses `tokio-tungstenite` for the underlying WebSocket protocol.
+//! Provides WebSocket upgrade detection and the HTTP 101 handshake response.
+//! This module handles **only the handshake phase**: it validates the upgrade
+//! request and returns the `101 Switching Protocols` response required by
+//! RFC 6455. Ongoing WebSocket session management (reading/writing frames)
+//! must be handled at the transport layer after the HTTP response is sent.
 //!
-//! ```ignore
-//! use rust_squared::ws::{WebSocketUpgrade, WebSocket};
-//! use futures_util::{SinkExt, StreamExt};
+//! Note: `on_upgrade()` is **not** provided by this module. To accept a
+//! WebSocket connection, call `WebSocketUpgrade::accept()` which returns
+//! the 101 response with the correct `Sec-WebSocket-Accept` header.
 //!
-//! async fn ws_handler(ws: WebSocketUpgrade) -> Result<Response, RsqError> {
-//!     Ok(ws.on_upgrade(|mut socket| async move {
-//!         while let Some(Ok(msg)) = socket.next().await {
-//!             if msg.is_text() {
-//!                 socket.send(msg).await.ok();
-//!             }
-//!         }
-//!     }))
-//! }
+//! ```text
+//! // Pseudocode — actual WebSocket session handling is transport-layer work:
+//! //
+//! // async fn ws_handler(ctx: RequestContext) -> Result<Response, RsqError> {
+//! //     let ws = WebSocketUpgrade::from_headers(ctx.headers())?;
+//! //     // ws.accept() returns the 101 Switching Protocols HTTP response.
+//! //     // After this response is sent, upgrade the transport to WebSocket
+//! //     // frames outside of the HTTP handler.
+//! //     Ok(ws.accept())
+//! // }
 //! ```
 
 use http::{HeaderValue, StatusCode};

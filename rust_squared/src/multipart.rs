@@ -81,39 +81,90 @@ fn extract_boundary(content_type: &str) -> Option<&str> {
         })
 }
 
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 fn parse_multipart(body: &[u8], boundary: &str) -> Result<Multipart, RsqError> {
     let delimiter = format!("--{boundary}");
     let end_delimiter = format!("--{boundary}--");
-    let body_str = String::from_utf8_lossy(body);
+    let delim_bytes = delimiter.as_bytes();
+    let end_delim_bytes = end_delimiter.as_bytes();
 
     let mut parts = Vec::new();
+    let mut search_start = 0usize;
 
-    for section in body_str.split(&delimiter) {
-        let section = section.trim_start_matches("\r\n").trim_end_matches("\r\n");
-        if section.is_empty() || section == "--" || section.starts_with("--") {
+    // Find all delimiter positions by byte searching
+    loop {
+        let delim_pos = match find_subsequence(&body[search_start..], delim_bytes) {
+            Some(p) => search_start + p,
+            None => break,
+        };
+
+        // Check if this is the closing delimiter
+        let after_delim = delim_pos + delim_bytes.len();
+        if body.get(after_delim..after_delim + 2) == Some(b"--") {
+            break;
+        }
+
+        // Skip past the delimiter and the following CRLF or LF
+        let section_start = if body.get(after_delim..after_delim + 2) == Some(b"\r\n") {
+            after_delim + 2
+        } else if body.get(after_delim..after_delim + 1) == Some(b"\n") {
+            after_delim + 1
+        } else {
+            after_delim
+        };
+
+        // Find where this section ends: next occurrence of delimiter
+        let section_end = match find_subsequence(&body[section_start..], delim_bytes) {
+            Some(p) => section_start + p,
+            None => body.len(),
+        };
+
+        // Trim trailing CRLF before the next delimiter
+        let section = &body[section_start..section_end];
+        let section = if section.ends_with(b"\r\n") {
+            &section[..section.len() - 2]
+        } else if section.ends_with(b"\n") {
+            &section[..section.len() - 1]
+        } else {
+            section
+        };
+
+        // Check if the section is just the end delimiter suffix
+        if section == b"--" || section.starts_with(end_delim_bytes) {
+            search_start = section_end;
             continue;
         }
 
-        // Split headers from body at double CRLF
-        let (headers_part, data_part) = if let Some(pos) = section.find("\r\n\r\n") {
-            (&section[..pos], &section[pos + 4..])
-        } else if let Some(pos) = section.find("\n\n") {
-            (&section[..pos], &section[pos + 2..])
-        } else {
-            continue;
-        };
+        // Split headers from body at double CRLF (headers are ASCII)
+        let (headers_bytes, data_bytes) =
+            if let Some(pos) = find_subsequence(section, b"\r\n\r\n") {
+                (&section[..pos], &section[pos + 4..])
+            } else if let Some(pos) = find_subsequence(section, b"\n\n") {
+                (&section[..pos], &section[pos + 2..])
+            } else {
+                search_start = section_end;
+                continue;
+            };
 
-        // Remove trailing end delimiter from data
-        let data_part = data_part
-            .trim_end_matches("\r\n")
-            .trim_end_matches(&end_delimiter)
-            .trim_end_matches("\r\n");
+        // Parse headers as ASCII strings
+        let headers_str = match std::str::from_utf8(headers_bytes) {
+            Ok(s) => s,
+            Err(_) => {
+                search_start = section_end;
+                continue;
+            }
+        };
 
         let mut name = None;
         let mut filename = None;
         let mut content_type = None;
 
-        for line in headers_part.lines() {
+        for line in headers_str.lines() {
             let lower = line.to_ascii_lowercase();
             if lower.starts_with("content-disposition:") {
                 for param in line.split(';') {
@@ -130,13 +181,16 @@ fn parse_multipart(body: &[u8], boundary: &str) -> Result<Multipart, RsqError> {
         }
 
         if let Some(name) = name {
+            // Keep part data as raw bytes — never convert through String
             parts.push(Part {
                 name,
                 filename,
                 content_type,
-                data: Bytes::from(data_part.to_string()),
+                data: Bytes::copy_from_slice(data_bytes),
             });
         }
+
+        search_start = section_end;
     }
 
     Ok(Multipart { parts })
@@ -187,5 +241,28 @@ mod tests {
         let body = "------boundary--\r\n";
         let result = parse_multipart(body.as_bytes(), "----boundary").unwrap();
         assert!(result.parts().is_empty());
+    }
+
+    #[test]
+    fn parse_binary_file_upload_preserves_bytes() {
+        // Binary data that would be corrupted by UTF-8 round-tripping
+        let binary_data: &[u8] = &[0xFF, 0xFE, 0x00, 0x01];
+        let mut body = Vec::new();
+        body.extend_from_slice(b"------boundary\r\n");
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"bin\"; filename=\"data.bin\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n");
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(binary_data);
+        body.extend_from_slice(b"\r\n------boundary--\r\n");
+
+        let result = parse_multipart(&body, "----boundary").unwrap();
+        assert_eq!(result.parts().len(), 1);
+        let part = &result.parts()[0];
+        assert_eq!(part.name, "bin");
+        assert_eq!(part.filename.as_deref(), Some("data.bin"));
+        // Verify no byte was silently replaced — exact match required
+        assert_eq!(&part.data[..], binary_data);
     }
 }
