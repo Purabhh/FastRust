@@ -1,10 +1,16 @@
 use bytes::Bytes;
 use http::StatusCode;
 use http::header::CONTENT_TYPE;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full, combinators::BoxBody};
 
-pub type RsqBody = Full<Bytes>;
+/// Flexible body type: supports both buffered (Full) and streaming responses.
+pub type RsqBody = BoxBody<Bytes, std::convert::Infallible>;
 pub type Response = http::Response<RsqBody>;
+
+/// Helper to wrap a Full body into BoxBody.
+fn boxed_full(body: Bytes) -> RsqBody {
+    Full::new(body).boxed()
+}
 
 pub trait IntoResponse {
     fn into_response(self) -> Response;
@@ -15,7 +21,7 @@ pub struct Html(pub String);
 fn build_response(status: StatusCode, body: Bytes) -> Response {
     http::Response::builder()
         .status(status)
-        .body(Full::new(body))
+        .body(boxed_full(body))
         .expect("response builder should be infallible")
 }
 

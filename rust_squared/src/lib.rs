@@ -10,6 +10,7 @@ pub mod response;
 pub mod router;
 pub mod sanitize;
 pub mod schema;
+pub mod sse;
 pub mod state;
 
 pub use http::Method;

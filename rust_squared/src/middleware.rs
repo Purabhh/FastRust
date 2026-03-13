@@ -6,6 +6,7 @@ use std::time::Duration;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures_util::future::BoxFuture;
+use http_body_util::BodyExt;
 use http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
     AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
@@ -391,7 +392,7 @@ impl RsqMiddleware for CompressionMiddleware {
             if body_bytes.len() < self.min_size {
                 let rebuilt = http::Response::from_parts(
                     parts,
-                    http_body_util::Full::new(body_bytes),
+                    http_body_util::Full::new(body_bytes).boxed(),
                 );
                 return Ok(rebuilt);
             }
@@ -407,7 +408,7 @@ impl RsqMiddleware for CompressionMiddleware {
 
             let mut rebuilt = http::Response::from_parts(
                 parts,
-                http_body_util::Full::new(bytes::Bytes::from(compressed)),
+                http_body_util::Full::new(bytes::Bytes::from(compressed)).boxed(),
             );
             rebuilt.headers_mut().insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
             rebuilt.headers_mut().remove(CONTENT_LENGTH);

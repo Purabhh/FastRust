@@ -4,6 +4,8 @@ use http::header::CONTENT_TYPE;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use http_body_util::BodyExt;
+
 use crate::error::RsqError;
 use crate::request::RequestContext;
 use crate::response::{IntoResponse, Response};
@@ -121,7 +123,7 @@ where
         let body = serde_json::to_vec(&self.0).expect("json serialization should succeed");
         let mut response = http::Response::builder()
             .status(http::StatusCode::OK)
-            .body(http_body_util::Full::new(bytes::Bytes::from(body)))
+            .body(http_body_util::Full::new(bytes::Bytes::from(body)).boxed())
             .expect("response builder should be infallible");
         response.headers_mut().insert(
             CONTENT_TYPE,
