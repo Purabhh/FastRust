@@ -17,6 +17,8 @@ pub mod sse;
 pub mod static_files;
 pub mod ws;
 pub mod state;
+pub mod static_files;
+pub use static_files::ServeDir;
 
 pub use http::Method;
 pub use serde_json;
