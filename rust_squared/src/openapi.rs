@@ -83,10 +83,16 @@ pub fn build_spec(routes: &[Route], schemas: &HashMap<String, Value>) -> Value {
         if let Some(body) = request_body {
             operation.insert("requestBody".into(), body);
         }
-        path_object.insert(
-            route.method().as_str().to_ascii_lowercase(),
-            Value::Object(operation),
-        );
+        match route.method().as_str() {
+            "GET" => path_object.insert("get".into(), Value::Object(operation)),
+            "POST" => path_object.insert("post".into(), Value::Object(operation)),
+            "PUT" => path_object.insert("put".into(), Value::Object(operation)),
+            "DELETE" => path_object.insert("delete".into(), Value::Object(operation)),
+            "PATCH" => path_object.insert("patch".into(), Value::Object(operation)),
+            "HEAD" => path_object.insert("head".into(), Value::Object(operation)),
+            "OPTIONS" => path_object.insert("options".into(), Value::Object(operation)),
+            _ => None,
+        };
     }
 
     json!({
