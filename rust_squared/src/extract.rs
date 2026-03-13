@@ -9,7 +9,9 @@ use crate::request::RequestContext;
 use crate::response::{IntoResponse, Response};
 
 pub trait FromRequest: Sized + Send {
-    fn from_request(ctx: &mut RequestContext) -> impl Future<Output = Result<Self, RsqError>> + Send + '_;
+    fn from_request<'a>(ctx: &'a mut RequestContext) -> impl Future<Output = Result<Self, RsqError>> + Send + 'a
+    where
+        Self: 'a;
 }
 
 pub struct Path<T>(pub T);
