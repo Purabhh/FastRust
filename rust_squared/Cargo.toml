@@ -25,6 +25,7 @@ tokio-rustls.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 rand.workspace = true
+tokio-tungstenite.workspace = true
 rust_squared_macros = { path = "../rust_squared_macros" }
 
 [dev-dependencies]

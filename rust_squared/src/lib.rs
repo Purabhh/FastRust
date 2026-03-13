@@ -12,6 +12,7 @@ pub mod multipart;
 pub mod sanitize;
 pub mod schema;
 pub mod sse;
+pub mod ws;
 pub mod state;
 
 pub use http::Method;
