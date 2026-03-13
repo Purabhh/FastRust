@@ -1,6 +1,5 @@
 use std::future::Future;
 
-use async_trait::async_trait;
 use http::header::CONTENT_TYPE;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -9,9 +8,8 @@ use crate::error::RsqError;
 use crate::request::RequestContext;
 use crate::response::{IntoResponse, Response};
 
-#[async_trait]
-pub trait FromRequest: Sized {
-    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError>;
+pub trait FromRequest: Sized + Send {
+    fn from_request(ctx: &mut RequestContext) -> impl Future<Output = Result<Self, RsqError>> + Send + '_;
 }
 
 pub struct Path<T>(pub T);
@@ -22,7 +20,6 @@ impl<T> Path<T> {
     }
 }
 
-#[async_trait]
 impl<T> FromRequest for Path<T>
 where
     T: DeserializeOwned + Send,
@@ -55,7 +52,6 @@ impl<T> Query<T> {
     }
 }
 
-#[async_trait]
 impl<T> FromRequest for Query<T>
 where
     T: DeserializeOwned + Send,
@@ -76,7 +72,6 @@ impl<T> Json<T> {
     }
 }
 
-#[async_trait]
 impl<T> FromRequest for Json<T>
 where
     T: DeserializeOwned + Send,
@@ -133,7 +128,6 @@ impl<T> State<T> {
     }
 }
 
-#[async_trait]
 impl<T> FromRequest for State<T>
 where
     T: Clone + Send + Sync + 'static,

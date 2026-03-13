@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use futures_util::future::BoxFuture;
 use http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
     AUTHORIZATION,
@@ -12,9 +12,26 @@ use crate::request::RequestContext;
 use crate::response::{IntoResponse, Response};
 use crate::router::Route;
 
-#[async_trait]
+/// Middleware trait for the onion-model request pipeline.
+///
+/// Uses explicit `BoxFuture` instead of `async_trait` to keep dyn-safety
+/// (`Arc<dyn RsqMiddleware>`) while avoiding the proc-macro dependency.
+///
+/// Implement with `Box::pin(async move { ... })`:
+/// ```ignore
+/// impl RsqMiddleware for MyMiddleware {
+///     fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+///         Box::pin(async move {
+///             // pre-processing
+///             let response = next.run(ctx).await?;
+///             // post-processing
+///             Ok(response)
+///         })
+///     }
+/// }
+/// ```
 pub trait RsqMiddleware: Send + Sync + 'static {
-    async fn handle(&self, ctx: RequestContext, next: Next) -> Result<Response, RsqError>;
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>>;
 }
 
 #[derive(Clone)]
@@ -77,21 +94,22 @@ impl BearerAuthMiddleware {
     }
 }
 
-#[async_trait]
 impl RsqMiddleware for BearerAuthMiddleware {
-    async fn handle(&self, ctx: RequestContext, next: Next) -> Result<Response, RsqError> {
-        let authorized = ctx
-            .headers()
-            .get(AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value == format!("Bearer {}", self.expected_token))
-            .unwrap_or(false);
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            let authorized = ctx
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value == format!("Bearer {}", self.expected_token))
+                .unwrap_or(false);
 
-        if !authorized {
-            return Ok((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
-        }
+            if !authorized {
+                return Ok((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
+            }
 
-        next.run(ctx).await
+            next.run(ctx).await
+        })
     }
 }
 
@@ -104,41 +122,43 @@ impl LoggingMiddleware {
     }
 }
 
-#[async_trait]
 impl RsqMiddleware for LoggingMiddleware {
-    async fn handle(&self, ctx: RequestContext, next: Next) -> Result<Response, RsqError> {
-        tracing::info!(method = %ctx.method(), path = %ctx.uri().path(), "request received");
-        let mut response = next.run(ctx).await?;
-        response.headers_mut().insert(
-            http::header::HeaderName::from_static("x-fastrust-logged"),
-            HeaderValue::from_static("true"),
-        );
-        Ok(response)
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            tracing::info!(method = %ctx.method(), path = %ctx.uri().path(), "request received");
+            let mut response = next.run(ctx).await?;
+            response.headers_mut().insert(
+                http::header::HeaderName::from_static("x-fastrust-logged"),
+                HeaderValue::from_static("true"),
+            );
+            Ok(response)
+        })
     }
 }
 
-#[async_trait]
 impl RsqMiddleware for CorsMiddleware {
-    async fn handle(&self, ctx: RequestContext, next: Next) -> Result<Response, RsqError> {
-        if ctx.method() == Method::OPTIONS {
-            let mut response = StatusCode::NO_CONTENT.into_response();
+    fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<Response, RsqError>> {
+        Box::pin(async move {
+            if ctx.method() == Method::OPTIONS {
+                let mut response = StatusCode::NO_CONTENT.into_response();
+                apply_cors_headers(
+                    &mut response,
+                    &self.allow_origin,
+                    &self.allow_methods,
+                    &self.allow_headers,
+                );
+                return Ok(response);
+            }
+
+            let mut response = next.run(ctx).await?;
             apply_cors_headers(
                 &mut response,
                 &self.allow_origin,
                 &self.allow_methods,
                 &self.allow_headers,
             );
-            return Ok(response);
-        }
-
-        let mut response = next.run(ctx).await?;
-        apply_cors_headers(
-            &mut response,
-            &self.allow_origin,
-            &self.allow_methods,
-            &self.allow_headers,
-        );
-        Ok(response)
+            Ok(response)
+        })
     }
 }
 
@@ -163,8 +183,8 @@ fn apply_cors_headers(
 mod tests {
     use std::sync::Arc;
 
-    use async_trait::async_trait;
     use bytes::Bytes;
+    use futures_util::future::BoxFuture;
     use http::{Method, Request, StatusCode};
     use http::header::AUTHORIZATION;
     use http_body_util::Full;
@@ -181,13 +201,14 @@ mod tests {
         events: Arc<Mutex<Vec<&'static str>>>,
     }
 
-    #[async_trait]
     impl RsqMiddleware for RecordingMiddleware {
-        async fn handle(&self, ctx: RequestContext, next: Next) -> Result<crate::Response, crate::RsqError> {
-            self.events.lock().await.push("before");
-            let response = next.run(ctx).await?;
-            self.events.lock().await.push("after");
-            Ok(response)
+        fn handle<'a>(&'a self, ctx: RequestContext, next: Next) -> BoxFuture<'a, Result<crate::Response, crate::RsqError>> {
+            Box::pin(async move {
+                self.events.lock().await.push("before");
+                let response = next.run(ctx).await?;
+                self.events.lock().await.push("after");
+                Ok(response)
+            })
         }
     }
 
