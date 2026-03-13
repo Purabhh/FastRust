@@ -26,7 +26,10 @@ impl<T> FromRequest for Path<T>
 where
     T: DeserializeOwned + Send,
 {
-    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
+    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
+    where
+        Self: 'a,
+    {
         let encoded = ctx
             .path_params()
             .iter()
@@ -58,7 +61,10 @@ impl<T> FromRequest for Query<T>
 where
     T: DeserializeOwned + Send,
 {
-    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
+    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
+    where
+        Self: 'a,
+    {
         let raw = ctx.uri().query().unwrap_or_default();
         let value = serde_urlencoded::from_str(raw)
             .map_err(|error| RsqError::unprocessable_entity(format!("invalid query string: {error}")))?;
@@ -78,7 +84,10 @@ impl<T> FromRequest for Json<T>
 where
     T: DeserializeOwned + Send,
 {
-    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
+    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
+    where
+        Self: 'a,
+    {
         let is_json = ctx
             .headers()
             .get(CONTENT_TYPE)
@@ -134,7 +143,10 @@ impl<T> FromRequest for State<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
+    async fn from_request<'a>(ctx: &'a mut RequestContext) -> Result<Self, RsqError>
+    where
+        Self: 'a,
+    {
         let value = ctx.state().get::<T>().ok_or_else(|| {
             RsqError::internal(format!(
                 "state for `{}` is not registered",
