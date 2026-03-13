@@ -504,16 +504,24 @@ mod tests {
         });
 
         // Make a raw HTTP request to confirm server is running
-        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-        tokio::io::AsyncWriteExt::write_all(&mut stream, b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").await.unwrap();
-        let mut buf = vec![0u8; 1024];
-        let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await.unwrap();
-        let response_str = String::from_utf8_lossy(&buf[..n]);
-        assert!(response_str.contains("200"));
+        {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            tokio::io::AsyncWriteExt::write_all(
+                &mut stream,
+                b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            ).await.unwrap();
+            let mut buf = vec![0u8; 1024];
+            let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await.unwrap();
+            let response_str = String::from_utf8_lossy(&buf[..n]);
+            assert!(response_str.contains("200"));
+        } // stream dropped, connection closed
 
         // Send shutdown signal
         tx.send(()).unwrap();
-        let result = handle.await.unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle,
+        ).await.expect("shutdown should complete within 5s").unwrap();
         assert!(result.is_ok());
     }
 
