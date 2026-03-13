@@ -57,3 +57,30 @@ where
 {
     handler.into_route(method, pattern.into()).with_meta(meta)
 }
+
+pub async fn serve<S>(service: S, addr: SocketAddr) -> Result<(), RsqError>
+where
+    S: Service<Request<Incoming>, Response = Response, Error = RsqError> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+{
+    let listener = TcpListener::bind(addr)
+        .await
+        .map_err(|error| RsqError::internal(format!("failed to bind listener: {error}")))?;
+
+    loop {
+        let (stream, _) = listener
+            .accept()
+            .await
+            .map_err(|error| RsqError::internal(format!("failed to accept connection: {error}")))?;
+        let service = service.clone();
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            if let Err(error) = AutoBuilder::new(TokioExecutor::new())
+                .serve_connection(io, service)
+                .await
+            {
+                tracing::error!("connection error: {error}");
+            }
+        });
+    }
+}

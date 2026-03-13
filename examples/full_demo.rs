@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use futures::stream;
 use rust_squared::{BearerAuthMiddleware, CorsMiddleware, Json, LoggingMiddleware, Path, Query, RsqApp, RsqSchema, State};
+use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
 
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -73,8 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get("/sse", sse_stream)
         .unwrap();
 
-    let layered = tower_http::compression::CompressionLayer::new().layer(app);
-layered.serve("0.0.0.0:3000".parse()?).await?;
+    let layered = ServiceBuilder::new().layer(TraceLayer::new_for_http()).service(app);
+rust_squared::serve(layered, "0.0.0.0:3000".parse()?).await?;
 
     Ok(())
 }
