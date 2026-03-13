@@ -8,6 +8,8 @@ rust-version.workspace = true
 [dependencies]
 tower = "0.4"
 tower-http = { version = "0.5", features = ["compression-gzip"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["compression-gzip"] }
 bytes.workspace = true
 futures-util.workspace = true
 http.workspace = true
