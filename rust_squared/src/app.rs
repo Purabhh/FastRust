@@ -233,6 +233,10 @@ impl RsqApp {
     }
 
     pub async fn handle_incoming_with_addr(&self, request: Request<Incoming>, addr: SocketAddr) -> Response {
+        self.handle_incoming_with_addr(request, SocketAddr::from(([0, 0, 0, 0], 0)))
+    }
+
+    pub async fn handle_incoming_with_addr(&self, request: Request<Incoming>, addr: SocketAddr) -> Response {
         let method = request.method().clone();
         let path = request.uri().path().to_string();
 
