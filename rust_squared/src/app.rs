@@ -651,3 +651,18 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 }
+
+impl tower::Service<Request<Incoming>> for RsqApp {
+    type Response = Response;
+    type Error = Infallible;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+        let this = self.clone();
+        Box::pin(async move { Ok(this.handle_incoming(req).await) })
+    }
+}
