@@ -22,7 +22,7 @@ pub use http::Method;
 pub use serde_json;
 pub use app::RsqApp;
 pub use error::RsqError;
-pub use extract::{Cookie, FromRequest, Handler, Json, Path, Query, State};
+pub use extract::{FromRequest, Handler, Json, Path, Query, State};
 pub use middleware::{
     BearerAuthMiddleware, CompressionMiddleware, CorsMiddleware, CsrfMiddleware,
     LoggingMiddleware, MaxBodySizeMiddleware, Next, RateLimitMiddleware,
@@ -35,7 +35,7 @@ pub use static_files::StaticFiles;
 pub use openapi::{build_spec, openapi_response, swagger_ui_response};
 pub use request::{RequestContext, RsqRequestBody};
 
-pub use response::{Html, IntoResponse, Redirect, Response, RsqBody, set_cookie};
+pub use response::{Html, IntoResponse, Redirect, Response, RsqBody};
 
 pub use router::{MethodNotAllowed, Route, RouteMeta, Router};
 pub use schema::RsqSchema;
