@@ -101,7 +101,10 @@ impl RsqMiddleware for BearerAuthMiddleware {
                 .headers()
                 .get(AUTHORIZATION)
                 .and_then(|value| value.to_str().ok())
-                .map(|value| value == format!("Bearer {}", self.expected_token))
+                .map(|value| {
+                    value.starts_with("Bearer ")
+                        && value[7..] == self.expected_token
+                })
                 .unwrap_or(false);
 
             if !authorized {

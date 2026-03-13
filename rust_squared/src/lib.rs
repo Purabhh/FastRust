@@ -23,7 +23,7 @@ pub use response::{Html, IntoResponse, Response, RsqBody};
 pub use router::{MethodNotAllowed, Route, RouteMeta, Router};
 pub use schema::RsqSchema;
 pub use state::AppState;
-pub use rust_squared_macros::{RsqSchema, get, post};
+pub use rust_squared_macros::{RsqSchema, delete, get, head, options, patch, post, put};
 
 pub fn route<H, Args>(method: Method, pattern: impl Into<String>, handler: H) -> Route
 where

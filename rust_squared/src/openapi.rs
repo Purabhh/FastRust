@@ -9,8 +9,12 @@ pub fn build_spec(routes: &[Route], schemas: &HashMap<String, Value>) -> Value {
     let mut paths = serde_json::Map::new();
 
     for route in routes {
+        let openapi_path = {
+            let trimmed = route.pattern().trim_end_matches('/');
+            if trimmed.is_empty() { "/".to_string() } else { trimmed.to_string() }
+        };
         let path_item = paths
-            .entry(route.pattern().trim_end_matches('/').to_string())
+            .entry(openapi_path)
             .or_insert_with(|| Value::Object(serde_json::Map::new()));
         let path_object = path_item
             .as_object_mut()
@@ -53,19 +57,29 @@ pub fn build_spec(routes: &[Route], schemas: &HashMap<String, Value>) -> Value {
             })
         }).unwrap_or_else(|| json!({ "description": "Successful response" }));
 
+        let mut operation = serde_json::Map::new();
+        if let Some(summary) = route.meta().summary() {
+            operation.insert("summary".into(), json!(summary));
+        }
+        if let Some(description) = route.meta().description() {
+            operation.insert("description".into(), json!(description));
+        }
+        if let Some(operation_id) = route.meta().operation_id() {
+            operation.insert("operationId".into(), json!(operation_id));
+        }
+        if !route.meta().tags().is_empty() {
+            operation.insert("tags".into(), json!(route.meta().tags()));
+        }
+        operation.insert("responses".into(), json!({ "200": success_response }));
+        if !parameters.is_empty() {
+            operation.insert("parameters".into(), json!(parameters));
+        }
+        if let Some(body) = request_body {
+            operation.insert("requestBody".into(), body);
+        }
         path_object.insert(
             route.method().as_str().to_ascii_lowercase(),
-            json!({
-                "summary": route.meta().summary(),
-                "description": route.meta().description(),
-                "operationId": route.meta().operation_id(),
-                "tags": route.meta().tags(),
-                "responses": {
-                    "200": success_response
-                },
-                "parameters": parameters,
-                "requestBody": request_body
-            }),
+            Value::Object(operation),
         );
     }
 
