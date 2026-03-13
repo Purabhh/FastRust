@@ -17,8 +17,6 @@ pub mod sse;
 pub mod static_files;
 pub mod ws;
 pub mod state;
-pub mod static_files;
-pub use static_files::ServeDir;
 
 pub use http::Method;
 pub use serde_json;
@@ -33,7 +31,7 @@ pub use middleware::{
 };
 pub use cookie::{CookieJar, set_cookie, set_cookie_with};
 pub use sanitize::{html_escape, is_safe_header_value, strip_null_bytes};
-pub use static_files::StaticFiles;
+pub use static_files::{StaticFiles, ServeDir};
 pub use openapi::{build_spec, openapi_response, swagger_ui_response};
 pub use request::{RequestContext, RsqRequestBody};
 
@@ -62,31 +60,4 @@ where
 {
     handler.into_route(method, pattern.into()).with_meta(meta)
 }
-
-pub async fn serve<S>(service: S, addr: SocketAddr) -> Result<(), RsqError>
-where
-    S: tower::Service<Request<Incoming>, Response = Response, Error = Infallible> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-{
-    let listener: TcpListener = TcpListener::bind(addr).await
-        .map_err(|e| RsqError::internal(format!("failed to bind listener: {e}")))?;
-
-    loop {
-        let (stream, _): (tokio::net::TcpStream, SocketAddr) = listener.accept().await
-            .map_err(|e| RsqError::internal(format!("failed to accept: {e}")))?;
-        let io = TokioIo::new(stream);
-        let service = service.clone();
-        tokio::spawn(async move {
-            if let Err(e) = AutoBuilder::new(TokioExecutor::new())
-                .serve_connection(io, service)
-                .await
-            {
-                tracing::error!("connection error: {e}");
-            }
-        });
-    }
-}
-
-
-
 

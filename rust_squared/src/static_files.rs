@@ -1,52 +1,90 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use crate::{Handler, Method, RequestContext, Response, RsqBody, RsqError};
+use http_body_util::BodyExt;
+use tokio::fs;
 
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use crate::error::RsqError;
+use crate::request::RequestContext;
+use crate::router::Route;
 
-pub struct ServeDir {
+/// Serves static files from a directory.
+pub struct StaticFiles {
     dir: PathBuf,
 }
 
-impl ServeDir {
+/// Alias for backwards compatibility.
+pub type ServeDir = StaticFiles;
+
+impl StaticFiles {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
         Self { dir: dir.into() }
     }
-}
 
-#[async_trait::async_trait]
-impl Handler<()> for ServeDir {
-    async fn call(&self, ctx: RequestContext) -> Result<Response, RsqError> {
-        let path = ctx.params.get("file").ok_or(RsqError::NotFound)?;
-        let full_path = self.dir.join(path);
-        if !full_path.starts_with(&self.dir) {
-            return Err(RsqError::NotFound);
-        }
+    /// Create a GET route that serves files under the given pattern.
+    ///
+    /// The pattern should end with a `{file}` parameter, e.g. `/static/{file}`.
+    pub fn into_route(self, pattern: impl Into<String>) -> Route {
+        let dir = Arc::new(self.dir);
+        Route::new(http::Method::GET, pattern, move |ctx: RequestContext| {
+            let dir = Arc::clone(&dir);
+            async move {
+                let file_path = ctx
+                    .path_param("file")
+                    .unwrap_or_default()
+                    .to_string();
 
-        let mut file = File::open(&full_path).await.map_err(|_| RsqError::NotFound)?;
+                if file_path.contains("..") {
+                    return Err(RsqError::not_found("file not found"));
+                }
 
-        let mut contents = Vec::new();
-        file.read_to_end(&mut contents).await.map_err(|e| RsqError::internal(e.to_string()))?;
+                let full_path = dir.join(&file_path);
 
-        let mime = mime_from_extension(full_path.extension().and_then(|s| s.to_str()).unwrap_or(""));
+                // Path traversal protection
+                if !full_path.starts_with(dir.as_ref()) {
+                    return Err(RsqError::not_found("file not found"));
+                }
 
-        Response::builder()
-            .header("Content-Type", mime)
-            .body(RsqBody::new_full(contents.into()))
-            .map_err(|e| RsqError::internal(e.to_string()))
+                let contents = fs::read(&full_path)
+                    .await
+                    .map_err(|_| RsqError::not_found("file not found"))?;
+
+                let mime = mime_from_extension(
+                    full_path
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(""),
+                );
+
+                let body = http_body_util::Full::new(bytes::Bytes::from(contents)).boxed();
+                http::Response::builder()
+                    .header("Content-Type", mime)
+                    .body(body)
+                    .map_err(|e| RsqError::internal(e.to_string()))
+            }
+        })
     }
 }
 
 fn mime_from_extension(ext: &str) -> &str {
     match ext {
-        "html" => "text/html",
+        "html" | "htm" => "text/html",
         "css" => "text/css",
-        "js" => "application/javascript",
+        "js" | "mjs" => "application/javascript",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "txt" => "text/plain",
+        "xml" => "application/xml",
+        "pdf" => "application/pdf",
+        "wasm" => "application/wasm",
         _ => "application/octet-stream",
     }
 }

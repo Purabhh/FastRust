@@ -1,10 +1,22 @@
 #!/bin/bash
 # Ralph — FastRust Automated Quality Daemon
-# Runs cargo check/test/clippy + custom checks, dispatches issues to bots via Discord
+# Runs cargo check/test/clippy + custom checks, dispatches issues via hybrid system
+# Layers: git task files (persistent) + webhooks (instant) + Discord (human visibility)
 
 set -u
 
 source /opt/ralph/ralph.conf
+
+# Source dispatch functions (hybrid task system)
+DISPATCH_CONF="/opt/ralph/dispatch.conf"
+if [ -f /opt/ralph/dispatch.sh ]; then
+    source /opt/ralph/dispatch.sh
+    DISPATCH_AVAILABLE=true
+else
+    DISPATCH_AVAILABLE=false
+fi
+
+TASKS_DIR="${REPO_DIR}/.tasks"
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 REPORT_FILE="${REPORT_DIR}/report_${TIMESTAMP}.json"
@@ -180,7 +192,7 @@ report = {
         "unwrap_count": safe_int("$UNWRAP_COUNT"),
         "todo_count": safe_int("$TODO_COUNT"),
         "issues": """$CUSTOM_ISSUES""".strip()
-    }
+    },
 }
 with open("$REPORT_FILE", "w") as f:
     json.dump(report, f, indent=2)
@@ -188,54 +200,71 @@ PYEOF
 
 echo "Ralph: report written to $REPORT_FILE"
 
-# --- Discord dispatch ---
+# --- Auto-resolve active tasks before dispatching new ones ---
+RESOLVED_TASKS=0
+if [ "$DISPATCH_AVAILABLE" = true ] && [ -d "$TASKS_DIR/active" ]; then
+    # Build a combined report of current issues for resolution checking
+    CURRENT_ISSUES="${CHECK_ERRORS}${TEST_ERRORS}${CLIPPY_ERRORS}${CUSTOM_ISSUES}"
+    RESOLVED_TASKS=$(auto_resolve_tasks "$CURRENT_ISSUES" "$COMMIT")
+    echo "Ralph: auto-resolved ${RESOLVED_TASKS} task(s)"
+fi
+
+# --- Hybrid dispatch (task files + webhooks + Discord) ---
+DISPATCHED=0
+
 if [ "$CHECK_OK" = true ] && [ "$TEST_OK" = true ] && [ "${CLIPPY_WARNINGS:-0}" -eq 0 ] && [ -z "$CUSTOM_ISSUES" ]; then
-    # All clear
-    MSG="[RALPH] All Clear — FastRust @ ${COMMIT}
+    # All clear — Discord-only notification (no task file for success)
+    if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
+        discord_notify "[RALPH] All Clear — FastRust @ ${COMMIT} | check:PASS test:${TEST_PASSED}/${TEST_TOTAL} clippy:0"
+    else
+        MSG="[RALPH] All Clear — FastRust @ ${COMMIT}
 cargo check: PASS | cargo test: PASS (${TEST_PASSED}/${TEST_TOTAL}) | clippy: PASS (0 warnings)"
-    discord_send "$PEENSBOT_TOKEN" "$MSG"
+        discord_send "$PEENSBOT_TOKEN" "$MSG"
+    fi
     echo "Ralph: all clear, notified Discord"
 else
-    # Dispatch issues
-    DISPATCHED=0
-
     if [ "$CHECK_OK" = false ]; then
-        # Parse files from cargo check errors
         FILES=$(echo "$CHECK_OUTPUT" | grep -oP '(?<=--> )[\w/._]+\.rs:\d+' | head -5)
         for fileline in $FILES; do
             FILE=$(echo "$fileline" | cut -d: -f1)
             LINE=$(echo "$fileline" | cut -d: -f2)
             OWNER=$(get_owner "$FILE")
-            TOKEN=$(get_dispatch_token "$FILE")
             ERROR_CONTEXT=$(echo "$CHECK_OUTPUT" | grep -A3 "$fileline" | head -4)
-            MSG="[RALPH] Compile Error — commit ${COMMIT}
 
-File: ${FILE}:${LINE}
-Owner: ${OWNER}
-Check: cargo check
-Issue:
+            if [ "$DISPATCH_AVAILABLE" = true ]; then
+                dispatch_task \
+                    "Fix compile error in ${FILE}:${LINE}" \
+                    "Compile error at \`${FILE}:${LINE}\`:\n\`\`\`\n${ERROR_CONTEXT}\n\`\`\`\n\nFix this compile error. Run \`cargo check --workspace\` to verify. Then \`cargo test --workspace\`. Commit and push." \
+                    "$OWNER" 1 ralph compile "$COMMIT" "${FILE}:${LINE}"
+            else
+                TOKEN=$(get_dispatch_token "$FILE")
+                MSG="[RALPH] Compile Error — commit ${COMMIT}
+File: ${FILE}:${LINE} | Owner: ${OWNER}
 \`\`\`
 ${ERROR_CONTEXT}
 \`\`\`
-
-Task: Fix this compile error. Run \`cargo check --workspace\` to verify. Then \`cargo test --workspace\`. Commit and push."
-            discord_send "$TOKEN" "$MSG"
+Task: Fix this. Run \`cargo check --workspace\` then \`cargo test --workspace\`. Commit and push."
+                discord_send "$TOKEN" "$MSG"
+            fi
             DISPATCHED=$((DISPATCHED + 1))
         done
     fi
 
     if [ "$TEST_OK" = false ]; then
-        MSG="[RALPH] Test Failures — commit ${COMMIT}
-
+        if [ "$DISPATCH_AVAILABLE" = true ]; then
+            dispatch_task \
+                "Fix test failures (${TEST_FAILED} failed)" \
+                "cargo test: ${TEST_PASSED} passed, ${TEST_FAILED} failed\n\`\`\`\n${TEST_ERRORS}\n\`\`\`\n\nFix the failing tests. Run \`cargo test --workspace\` to verify. Commit and push." \
+                "PeensBot" 1 ralph test "$COMMIT" ""
+        else
+            MSG="[RALPH] Test Failures — commit ${COMMIT}
 cargo test: ${TEST_PASSED} passed, ${TEST_FAILED} failed
-
 \`\`\`
 ${TEST_ERRORS}
 \`\`\`
-
 Task: Fix the failing tests. Run \`cargo test --workspace\` to verify. Commit and push."
-        # Send to both bots
-        discord_send "$PEENSBOT_TOKEN" "$MSG"
+            discord_send "$PEENSBOT_TOKEN" "$MSG"
+        fi
         DISPATCHED=$((DISPATCHED + 1))
     fi
 
@@ -245,36 +274,65 @@ Task: Fix the failing tests. Run \`cargo test --workspace\` to verify. Commit an
             FILE=$(echo "$fileline" | cut -d: -f1)
             LINE=$(echo "$fileline" | cut -d: -f2)
             OWNER=$(get_owner "$FILE")
-            TOKEN=$(get_dispatch_token "$FILE")
             WARN_CONTEXT=$(echo "$CLIPPY_OUTPUT" | grep -B1 -A3 "$fileline" | head -5)
-            MSG="[RALPH] Clippy Warning — commit ${COMMIT}
 
-File: ${FILE}:${LINE}
-Owner: ${OWNER}
-Check: cargo clippy
-
+            if [ "$DISPATCH_AVAILABLE" = true ]; then
+                dispatch_task \
+                    "Fix clippy warning in ${FILE}:${LINE}" \
+                    "Clippy warning at \`${FILE}:${LINE}\`:\n\`\`\`\n${WARN_CONTEXT}\n\`\`\`\n\nFix this clippy warning. Run \`cargo clippy --workspace\` to verify. Then \`cargo test --workspace\`. Commit and push." \
+                    "$OWNER" 2 ralph clippy "$COMMIT" "${FILE}:${LINE}"
+            else
+                TOKEN=$(get_dispatch_token "$FILE")
+                MSG="[RALPH] Clippy Warning — commit ${COMMIT}
+File: ${FILE}:${LINE} | Owner: ${OWNER}
 \`\`\`
 ${WARN_CONTEXT}
 \`\`\`
-
-Task: Fix this clippy warning. Run \`cargo clippy --workspace\` to verify. Then \`cargo test --workspace\`. Commit and push."
-            discord_send "$TOKEN" "$MSG"
+Task: Fix this. Run \`cargo clippy --workspace\` then \`cargo test --workspace\`. Commit and push."
+                discord_send "$TOKEN" "$MSG"
+            fi
             DISPATCHED=$((DISPATCHED + 1))
         done
     fi
 
     if echo -e "$CUSTOM_ISSUES" | grep -q "BROKEN_SERVE"; then
-        MSG="[RALPH] CRITICAL — commit ${COMMIT}
-
-Broken standalone \`serve()\` function found in \`lib.rs\`.
-This has been re-added 3+ times. It MUST be a method on RsqApp, not a standalone function.
-
-Task: Remove the standalone \`pub async fn serve()\` from lib.rs. The serve method belongs on \`impl RsqApp\` in app.rs. Run \`cargo check --workspace\` to verify. Commit and push."
-        discord_send "$PENEMASTER_TOKEN" "$MSG"
+        if [ "$DISPATCH_AVAILABLE" = true ]; then
+            dispatch_task \
+                "CRITICAL: Remove standalone serve() from lib.rs" \
+                "Broken standalone \`serve()\` function found in \`lib.rs\`.\nThis has been re-added 3+ times. It MUST be a method on RsqApp, not a standalone function.\n\nRemove the standalone \`pub async fn serve()\` from lib.rs. The serve method belongs on \`impl RsqApp\` in app.rs. Run \`cargo check --workspace\` to verify. Commit and push." \
+                "Penemaster" 1 ralph custom "$COMMIT" "rust_squared/src/lib.rs"
+        else
+            MSG="[RALPH] CRITICAL — commit ${COMMIT}
+Broken standalone \`serve()\` in \`lib.rs\`. Must be method on RsqApp.
+Task: Remove standalone serve(). Run \`cargo check --workspace\`. Commit and push."
+            discord_send "$PENEMASTER_TOKEN" "$MSG"
+        fi
         DISPATCHED=$((DISPATCHED + 1))
     fi
 
-    echo "Ralph: dispatched $DISPATCHED issues to Discord"
+    # Summary notification
+    if [ "$DISPATCH_AVAILABLE" = true ] && [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
+        QUEUE_COUNT=$(find "$TASKS_DIR/queue" -name "*.md" -not -name ".gitkeep" 2>/dev/null | wc -l)
+        ACTIVE_COUNT=$(find "$TASKS_DIR/active" -name "*.md" -not -name ".gitkeep" 2>/dev/null | wc -l)
+        discord_notify "[RALPH] @ ${COMMIT} — check:$([ "$CHECK_OK" = true ] && echo PASS || echo FAIL) test:${TEST_PASSED}/${TEST_TOTAL} clippy:${CLIPPY_WARNINGS:-0} | ${DISPATCHED} dispatched, ${QUEUE_COUNT} queued, ${ACTIVE_COUNT} active, ${RESOLVED_TASKS} resolved"
+    fi
+
+    echo "Ralph: dispatched $DISPATCHED issues"
+fi
+
+# --- Append task tracking to JSON report ---
+if [ -f "$REPORT_FILE" ]; then
+    python3 << PYEOF2
+import json
+with open("$REPORT_FILE", "r") as f:
+    report = json.load(f)
+report["tasks"] = {
+    "dispatched": int("${DISPATCHED:-0}"),
+    "resolved": int("${RESOLVED_TASKS:-0}")
+}
+with open("$REPORT_FILE", "w") as f:
+    json.dump(report, f, indent=2)
+PYEOF2
 fi
 
 # --- Cleanup old reports (keep last 100) ---

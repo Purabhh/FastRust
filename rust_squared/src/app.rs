@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+use std::convert::Infallible;
 use std::fs::File;
 use std::future::Future;
 use std::io::BufReader;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
-use std::collections::HashMap;
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use http::{Method, Request};
@@ -125,76 +128,6 @@ impl RsqApp {
         self.route_handler(Method::OPTIONS, pattern, handler)
     }
 
-    pub fn put<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::PUT, pattern, handler)
-    }
-
-    pub fn delete<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::DELETE, pattern, handler)
-    }
-
-    pub fn patch<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::PATCH, pattern, handler)
-    }
-
-    pub fn head<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::HEAD, pattern, handler)
-    }
-
-    pub fn options<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::OPTIONS, pattern, handler)
-    }
-
-    pub fn put<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::PUT, pattern, handler)
-    }
-
-    pub fn delete<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::DELETE, pattern, handler)
-    }
-
-    pub fn patch<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::PATCH, pattern, handler)
-    }
-
-    pub fn head<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::HEAD, pattern, handler)
-    }
-
-    pub fn options<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
-    where
-        H: Handler<Args>,
-    {
-        self.route_handler(Method::OPTIONS, pattern, handler)
-    }
-
     pub fn state<T>(mut self, value: T) -> Result<Self, RsqError>
     where
         T: Clone + Send + Sync + 'static,
@@ -229,15 +162,7 @@ impl RsqApp {
     }
 
     pub async fn handle_incoming(&self, request: Request<Incoming>) -> Response {
-        self.handle_incoming_with_addr(request, SocketAddr::from(([0, 0, 0, 0], 0)))
-    }
-
-    pub async fn handle_incoming_with_addr(&self, request: Request<Incoming>, addr: SocketAddr) -> Response {
-        self.handle_incoming_with_addr(request, SocketAddr::from(([0, 0, 0, 0], 0)))
-    }
-
-    pub async fn handle_incoming_with_addr(&self, request: Request<Incoming>, addr: SocketAddr) -> Response {
-        self.handle_incoming_with_addr(request, SocketAddr::from(([0, 0, 0, 0], 0)))
+        self.handle_incoming_with_addr(request, SocketAddr::from(([0, 0, 0, 0], 0))).await
     }
 
     pub async fn handle_incoming_with_addr(&self, request: Request<Incoming>, addr: SocketAddr) -> Response {
@@ -250,7 +175,7 @@ impl RsqApp {
 
         match self.router.find(&method, &path) {
             Ok((route, params)) => {
-                let ctx = RequestContext::from_incoming(request, params, self.state.clone(), None);
+                let ctx = RequestContext::from_incoming(request, params, self.state.clone(), Some(addr));
                 match Next::new(Arc::clone(&self.middlewares), route.clone()).run(ctx).await {
                     Ok(response) => response,
                     Err(error) => error.into_response(),
@@ -429,18 +354,6 @@ impl RsqApp {
         }
     }
 }
-
-
-
-
-
-use std::convert::Infallible;
-use std::task::{Context, Poll};
-use std::pin::Pin;
-use std::future::Future;
-use hyper::body::Incoming;
-use http::Request;
-use crate::response::Response;
 
 impl tower::Service<Request<Incoming>> for RsqApp {
     type Response = Response;
@@ -661,20 +574,5 @@ mod tests {
             .await;
 
         assert_eq!(response.status(), StatusCode::OK);
-    }
-}
-
-impl tower::Service<Request<Incoming>> for RsqApp {
-    type Response = Response;
-    type Error = Infallible;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        let this = self.clone();
-        Box::pin(async move { Ok(this.handle_incoming(req).await) })
     }
 }

@@ -766,6 +766,7 @@ mod tests {
             RsqRequestBody::Buffered(Bytes::new()),
             Default::default(),
             AppState::new(),
+            None,
         );
 
         let response = middleware.handle(ctx, next).await.unwrap();

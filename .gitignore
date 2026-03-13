@@ -1,2 +1,3 @@
 /target
 **/target
+.tasks/.task-index.json

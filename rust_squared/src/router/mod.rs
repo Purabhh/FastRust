@@ -148,6 +148,7 @@ mod tests {
                 RsqRequestBody::Buffered(bytes::Bytes::new()),
                 Default::default(),
                 AppState::new(),
+                None,
             )))
             .unwrap();
         assert_eq!(response.status(), http::StatusCode::CREATED);

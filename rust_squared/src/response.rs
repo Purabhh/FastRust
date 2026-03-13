@@ -137,8 +137,3 @@ mod tests {
         assert_eq!(r.headers()["location"], "/result");
     }
 }
-
-pub fn set_cookie(res: &mut Response, name: &str, value: &str) {
-    let cookie = format!("{}={}", name, value);
-    res.headers_mut().append(http::header::SET_COOKIE, cookie.parse().expect("valid cookie header"));
-}

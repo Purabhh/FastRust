@@ -3,6 +3,8 @@ use http::{HeaderMap, Method, Uri, request::Parts};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 
+use std::net::SocketAddr;
+
 use crate::error::RsqError;
 use crate::router::PathParams;
 use crate::state::AppState;
