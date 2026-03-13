@@ -63,18 +63,18 @@ impl SseEvent {
 impl std::fmt::Display for SseEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(ref event) = self.event {
-            write!(f, "event: {event}\n")?;
+            writeln!(f, "event: {event}")?;
         }
         if let Some(ref data) = self.data {
             for line in data.lines() {
-                write!(f, "data: {line}\n")?;
+                writeln!(f, "data: {line}")?;
             }
         }
         if let Some(ref id) = self.id {
-            write!(f, "id: {id}\n")?;
+            writeln!(f, "id: {id}")?;
         }
         if let Some(retry) = self.retry {
-            write!(f, "retry: {retry}\n")?;
+            writeln!(f, "retry: {retry}")?;
         }
         f.write_str("\n")
     }
