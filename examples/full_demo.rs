@@ -73,7 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get("/sse", sse_stream)
         .unwrap();
 
-    app.serve("0.0.0.0:3000".parse()?).await?;
+    let layered = tower_http::compression::CompressionLayer::new().layer(app);
+layered.serve("0.0.0.0:3000".parse()?).await?;
 
     Ok(())
 }
