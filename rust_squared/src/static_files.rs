@@ -7,7 +7,7 @@ use http::StatusCode;
 use http_body_util::Full;
 
 use crate::error::RsqError;
-use crate::response::{IntoResponse, Response, RsqBody};
+use crate::response::{Response, RsqBody};
 
 /// Serves static files from a directory on disk.
 pub struct StaticFiles {
