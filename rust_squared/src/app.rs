@@ -194,6 +194,10 @@ impl RsqApp {
     }
 
     pub async fn handle_incoming(&self, request: Request<Incoming>) -> Response {
+        self.handle_incoming_with_addr(request, SocketAddr::from(([0, 0, 0, 0], 0)))
+    }
+
+    pub async fn handle_incoming_with_addr(&self, request: Request<Incoming>, addr: SocketAddr) -> Response {
         let method = request.method().clone();
         let path = request.uri().path().to_string();
 
@@ -203,7 +207,7 @@ impl RsqApp {
 
         match self.router.find(&method, &path) {
             Ok((route, params)) => {
-                let ctx = RequestContext::from_incoming(request, params, self.state.clone());
+                let ctx = RequestContext::from_incoming(request, params, self.state.clone(), None);
                 match Next::new(Arc::clone(&self.middlewares), route.clone()).run(ctx).await {
                     Ok(response) => response,
                     Err(error) => error.into_response(),

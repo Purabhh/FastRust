@@ -22,7 +22,7 @@ pub use http::Method;
 pub use serde_json;
 pub use app::RsqApp;
 pub use error::RsqError;
-pub use extract::{Cookie, FromRequest, Handler, Json, Path, Query, State};
+pub use extract::{FromRequest, Handler, Json, Path, Query, State};
 pub use middleware::{
     BearerAuthMiddleware, CompressionMiddleware, CorsMiddleware, CsrfMiddleware,
     LoggingMiddleware, MaxBodySizeMiddleware, Next, RateLimitMiddleware,
@@ -35,7 +35,7 @@ pub use static_files::StaticFiles;
 pub use openapi::{build_spec, openapi_response, swagger_ui_response};
 pub use request::{RequestContext, RsqRequestBody};
 
-pub use response::{Html, IntoResponse, Redirect, Response, RsqBody, set_cookie};
+pub use response::{Html, IntoResponse, Redirect, Response, RsqBody};
 
 pub use router::{MethodNotAllowed, Route, RouteMeta, Router};
 pub use schema::RsqSchema;
@@ -66,11 +66,11 @@ where
     S: tower::Service<Request<Incoming>, Response = Response, Error = Infallible> + Clone + Send + 'static,
     S::Future: Send + 'static,
 {
-    let listener = TcpListener::bind(addr).await
+    let listener: TcpListener = TcpListener::bind(addr).await
         .map_err(|e| RsqError::internal(format!("failed to bind listener: {e}")))?;
 
     loop {
-        let (stream, _) = listener.accept().await
+        let (stream, _): (tokio::net::TcpStream, SocketAddr) = listener.accept().await
             .map_err(|e| RsqError::internal(format!("failed to accept: {e}")))?;
         let io = TokioIo::new(stream);
         let service = service.clone();
