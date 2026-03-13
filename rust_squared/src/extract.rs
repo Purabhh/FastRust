@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::pin::Pin;
 
 use http::header::CONTENT_TYPE;
 use serde::Serialize;
@@ -185,12 +186,12 @@ where
     A: FromRequest + Send + 'static,
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
-        crate::router::Route::new(method, pattern, move |mut ctx| {
+        crate::router::Route::new(method, pattern, move |mut ctx| -> Pin<Box<dyn Future<Output = Result<Res, RsqError>> + Send>> {
             let handler = self.clone();
-            async move {
+            Box::pin(async move {
                 let a = A::from_request(&mut ctx).await?;
                 handler(a).await
-            }
+            })
         })
     }
 }
@@ -204,13 +205,13 @@ where
     B: FromRequest + Send + 'static,
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
-        crate::router::Route::new(method, pattern, move |mut ctx| {
+        crate::router::Route::new(method, pattern, move |mut ctx| -> Pin<Box<dyn Future<Output = Result<Res, RsqError>> + Send>> {
             let handler = self.clone();
-            async move {
+            Box::pin(async move {
                 let a = A::from_request(&mut ctx).await?;
                 let b = B::from_request(&mut ctx).await?;
                 handler(a, b).await
-            }
+            })
         })
     }
 }
@@ -225,14 +226,14 @@ where
     C: FromRequest + Send + 'static,
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
-        crate::router::Route::new(method, pattern, move |mut ctx| {
+        crate::router::Route::new(method, pattern, move |mut ctx| -> Pin<Box<dyn Future<Output = Result<Res, RsqError>> + Send>> {
             let handler = self.clone();
-            async move {
+            Box::pin(async move {
                 let a = A::from_request(&mut ctx).await?;
                 let b = B::from_request(&mut ctx).await?;
                 let c = C::from_request(&mut ctx).await?;
                 handler(a, b, c).await
-            }
+            })
         })
     }
 }
@@ -248,15 +249,15 @@ where
     D: FromRequest + Send + 'static,
 {
     fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
-        crate::router::Route::new(method, pattern, move |mut ctx| {
+        crate::router::Route::new(method, pattern, move |mut ctx| -> Pin<Box<dyn Future<Output = Result<Res, RsqError>> + Send>> {
             let handler = self.clone();
-            async move {
+            Box::pin(async move {
                 let a = A::from_request(&mut ctx).await?;
                 let b = B::from_request(&mut ctx).await?;
                 let c = C::from_request(&mut ctx).await?;
                 let d = D::from_request(&mut ctx).await?;
                 handler(a, b, c, d).await
-            }
+            })
         })
     }
 }
