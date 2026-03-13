@@ -23,7 +23,7 @@ pub use http::Method;
 pub use serde_json;
 pub use app::RsqApp;
 pub use error::RsqError;
-pub use extract::{FromRequest, Handler, Json, Path, Query, State};
+pub use extract::{Cookie, FromRequest, Handler, Json, Path, Query, State};
 pub use middleware::{
     BearerAuthMiddleware, CompressionMiddleware, CorsMiddleware, CsrfMiddleware,
     LoggingMiddleware, MaxBodySizeMiddleware, Next, RateLimitMiddleware,
