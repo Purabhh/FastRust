@@ -87,7 +87,7 @@ pub struct SseBody<S> {
 
 impl<S> http_body::Body for SseBody<S>
 where
-    S: Stream<Item = SseEvent> + Send + 'static,
+    S: Stream<Item = SseEvent> + Send + Sync + 'static,
 {
     type Data = Bytes;
     type Error = std::convert::Infallible;
@@ -116,7 +116,7 @@ pub struct Sse {
 impl Sse {
     pub fn new<S>(stream: S) -> Self
     where
-        S: Stream<Item = SseEvent> + Send + 'static,
+        S: Stream<Item = SseEvent> + Send + Sync + 'static,
     {
         let sse_body = SseBody {
             stream: Box::pin(stream),

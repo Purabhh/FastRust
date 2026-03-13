@@ -614,7 +614,7 @@ impl CsrfMiddleware {
     fn generate_token(&self) -> String {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        let bytes: Vec<u8> = (0..self.token_length).map(|_| rng.gen::<u8>()).collect();
+        let bytes: Vec<u8> = (0..self.token_length).map(|_| rng.r#gen::<u8>()).collect();
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
