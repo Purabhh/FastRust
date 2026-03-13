@@ -2,7 +2,6 @@ mod route;
 mod trie;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 use http::Method;
 
@@ -18,10 +17,12 @@ pub struct MethodNotAllowed {
     pub allowed: Vec<Method>,
 }
 
+/// Lock-free router. The trie is built during app setup and never modified
+/// during serving, so no Mutex is needed — concurrent reads are free.
 #[derive(Default, Clone)]
 pub struct Router {
     routes: Vec<Route>,
-    trie: Arc<Mutex<TrieNode>>,
+    trie: TrieNode,
 }
 
 impl Router {
@@ -31,21 +32,13 @@ impl Router {
 
     pub fn insert(&mut self, route: Route) -> Result<(), RsqError> {
         let index = self.routes.len();
-        self.trie
-            .lock()
-            .expect("trie lock poisoned")
-            .insert(route.pattern(), route.method().clone(), index)?;
+        self.trie.insert(route.pattern(), route.method().clone(), index)?;
         self.routes.push(route);
         Ok(())
     }
 
     pub fn find(&self, method: &Method, path: &str) -> Result<(&Route, PathParams), MethodNotAllowed> {
-        match self
-            .trie
-            .lock()
-            .expect("trie lock poisoned")
-            .find(path, method)
-        {
+        match self.trie.find(path, method) {
             Match::Found(index, params) => Ok((&self.routes[index], params)),
             Match::MethodNotAllowed(allowed) => Err(MethodNotAllowed { allowed }),
             Match::NotFound => Err(MethodNotAllowed {

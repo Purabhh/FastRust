@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::future::Future;
 use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -7,9 +8,9 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use http::{Method, Request};
 use hyper::body::Incoming;
-use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as AutoBuilder;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
@@ -185,31 +186,26 @@ impl RsqApp {
         self.serve_listener(listener).await
     }
 
+    /// Serve with graceful shutdown. Stops accepting when `signal` completes,
+    /// then waits for in-flight connections to finish.
+    pub async fn serve_with_shutdown(
+        self,
+        addr: SocketAddr,
+        signal: impl Future<Output = ()> + Send + 'static,
+    ) -> Result<(), RsqError> {
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|error| RsqError::internal(format!("failed to bind listener: {error}")))?;
+        self.serve_listener_with_shutdown(listener, signal).await
+    }
+
     pub async fn serve_tls(
         self,
         addr: SocketAddr,
         cert_path: impl AsRef<std::path::Path>,
         key_path: impl AsRef<std::path::Path>,
     ) -> Result<(), RsqError> {
-        let cert_file = File::open(cert_path.as_ref())
-            .map_err(|e| RsqError::internal(format!("failed to open cert file: {e}")))?;
-        let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
-            .collect::<Result<_, _>>()
-            .map_err(|e| RsqError::internal(format!("failed to parse certs: {e}")))?;
-
-        let key_file = File::open(key_path.as_ref())
-            .map_err(|e| RsqError::internal(format!("failed to open key file: {e}")))?;
-        let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
-            .map_err(|e| RsqError::internal(format!("failed to parse private key: {e}")))?
-            .ok_or_else(|| RsqError::internal("no private key found in file"))?;
-
-        let config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .map_err(|e| RsqError::internal(format!("TLS config error: {e}")))?;
-
-        let acceptor = TlsAcceptor::from(Arc::new(config));
-
+        let acceptor = self.build_tls_acceptor(cert_path, key_path)?;
         let listener = TcpListener::bind(addr).await
             .map_err(|e| RsqError::internal(format!("failed to bind listener: {e}")))?;
 
@@ -232,7 +228,10 @@ impl RsqApp {
                     let app = Arc::clone(&app);
                     async move { Ok::<_, std::convert::Infallible>(app.handle_incoming(request).await) }
                 });
-                if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
+                if let Err(e) = AutoBuilder::new(TokioExecutor::new())
+                    .serve_connection(io, service)
+                    .await
+                {
                     tracing::error!("connection error: {e}");
                 }
             });
@@ -253,11 +252,86 @@ impl RsqApp {
                     let app = Arc::clone(&app);
                     async move { Ok::<_, std::convert::Infallible>(app.handle_incoming(request).await) }
                 });
-                if let Err(error) = http1::Builder::new().serve_connection(io, service).await {
+                if let Err(error) = AutoBuilder::new(TokioExecutor::new())
+                    .serve_connection(io, service)
+                    .await
+                {
                     tracing::error!("connection error: {error}");
                 }
             });
         }
+    }
+
+    /// Like `serve_listener` but stops accepting on shutdown signal and drains connections.
+    pub async fn serve_listener_with_shutdown(
+        self,
+        listener: TcpListener,
+        signal: impl Future<Output = ()> + Send + 'static,
+    ) -> Result<(), RsqError> {
+        let app = Arc::new(self);
+        let mut handles = Vec::new();
+
+        tokio::pin!(signal);
+
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    let (stream, _) = result
+                        .map_err(|e| RsqError::internal(format!("failed to accept: {e}")))?;
+                    let app = Arc::clone(&app);
+                    let handle = tokio::spawn(async move {
+                        let io = TokioIo::new(stream);
+                        let service = service_fn(move |request| {
+                            let app = Arc::clone(&app);
+                            async move { Ok::<_, std::convert::Infallible>(app.handle_incoming(request).await) }
+                        });
+                        if let Err(e) = AutoBuilder::new(TokioExecutor::new())
+                            .serve_connection(io, service)
+                            .await
+                        {
+                            tracing::error!("connection error: {e}");
+                        }
+                    });
+                    handles.push(handle);
+                }
+                _ = &mut signal => {
+                    tracing::info!("shutdown signal received, draining connections");
+                    break;
+                }
+            }
+        }
+
+        // Wait for in-flight connections to complete
+        for handle in handles {
+            let _ = handle.await;
+        }
+        tracing::info!("all connections drained, server stopped");
+        Ok(())
+    }
+
+    fn build_tls_acceptor(
+        &self,
+        cert_path: impl AsRef<std::path::Path>,
+        key_path: impl AsRef<std::path::Path>,
+    ) -> Result<TlsAcceptor, RsqError> {
+        let cert_file = File::open(cert_path.as_ref())
+            .map_err(|e| RsqError::internal(format!("failed to open cert file: {e}")))?;
+        let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
+            .collect::<Result<_, _>>()
+            .map_err(|e| RsqError::internal(format!("failed to parse certs: {e}")))?;
+
+        let key_file = File::open(key_path.as_ref())
+            .map_err(|e| RsqError::internal(format!("failed to open key file: {e}")))?;
+        let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
+            .map_err(|e| RsqError::internal(format!("failed to parse private key: {e}")))?
+            .ok_or_else(|| RsqError::internal("no private key found in file"))?;
+
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .map_err(|e| RsqError::internal(format!("TLS config error: {e}")))?;
+
+        Ok(TlsAcceptor::from(Arc::new(config)))
     }
 
     fn docs_response(&self, method: &Method, path: &str) -> Option<Response> {
@@ -412,6 +486,34 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[http::header::CONTENT_TYPE], "text/html; charset=utf-8");
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_stops_server() {
+        let app = RsqApp::new()
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            app.serve_listener_with_shutdown(listener, async { rx.await.ok(); })
+                .await
+        });
+
+        // Make a request to confirm server is running
+        let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+            .build_http();
+        let uri: http::Uri = format!("http://{addr}/").parse().unwrap();
+        let resp = client.get(uri).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Send shutdown signal
+        tx.send(()).unwrap();
+        let result = handle.await.unwrap();
+        assert!(result.is_ok());
     }
 
     #[derive(Serialize, crate::RsqSchema)]

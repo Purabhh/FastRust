@@ -7,7 +7,7 @@ use crate::error::RsqError;
 
 use super::PathParams;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TrieNode {
     static_children: HashMap<String, TrieNode>,
     param_child: Option<(String, Box<TrieNode>)>,
