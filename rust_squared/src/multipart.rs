@@ -202,3 +202,15 @@ impl FromRequest for Multipart {
         Multipart::from_request(ctx).await
     }
 }
+
+use crate::extract::FromRequest;
+use async_trait::async_trait;
+
+#[async_trait]
+impl FromRequest for Multipart {
+    type Error = RsqError;
+
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, Self::Error> {
+        Multipart::from_request(ctx).await
+    }
+}
