@@ -160,6 +160,41 @@ impl RsqApp {
         self.route_handler(Method::OPTIONS, pattern, handler)
     }
 
+    pub fn put<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
+    where
+        H: Handler<Args>,
+    {
+        self.route_handler(Method::PUT, pattern, handler)
+    }
+
+    pub fn delete<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
+    where
+        H: Handler<Args>,
+    {
+        self.route_handler(Method::DELETE, pattern, handler)
+    }
+
+    pub fn patch<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
+    where
+        H: Handler<Args>,
+    {
+        self.route_handler(Method::PATCH, pattern, handler)
+    }
+
+    pub fn head<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
+    where
+        H: Handler<Args>,
+    {
+        self.route_handler(Method::HEAD, pattern, handler)
+    }
+
+    pub fn options<H, Args>(self, pattern: impl Into<String>, handler: H) -> Result<Self, RsqError>
+    where
+        H: Handler<Args>,
+    {
+        self.route_handler(Method::OPTIONS, pattern, handler)
+    }
+
     pub fn state<T>(mut self, value: T) -> Result<Self, RsqError>
     where
         T: Clone + Send + Sync + 'static,
