@@ -1,3 +1,4 @@
+use anymap2;
 use bytes::Bytes;
 use http::{HeaderMap, Method, Uri, request::Parts};
 use http_body_util::BodyExt;
@@ -22,6 +23,7 @@ pub struct RequestContext {
     state: AppState,
     peer_addr: Option<SocketAddr>,
     max_body_size: usize,
+    dep_cache: anymap2::SendSyncAnyMap,
 }
 
 impl RequestContext {
@@ -33,6 +35,7 @@ impl RequestContext {
             state,
             peer_addr,
             max_body_size: 1024 * 1024,
+            dep_cache: anymap2::SendSyncAnyMap::new(),
         }
     }
 
@@ -107,6 +110,11 @@ impl RequestContext {
 
     pub fn set_body(&mut self, body: Bytes) {
         self.body = RsqRequestBody::Buffered(body);
+    }
+
+    /// Access the per-request dependency cache.
+    pub fn dep_cache_mut(&mut self) -> &mut anymap2::SendSyncAnyMap {
+        &mut self.dep_cache
     }
 
     pub async fn take_body_bytes(&mut self) -> Result<Bytes, RsqError> {

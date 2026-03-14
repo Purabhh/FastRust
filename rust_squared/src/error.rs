@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 use http::StatusCode;
+use serde::Serialize;
 
 use crate::response::{IntoResponse, Response};
 
@@ -101,6 +102,65 @@ impl std::error::Error for RsqError {
 impl IntoResponse for RsqError {
     fn into_response(self) -> Response {
         (self.status, self.message).into_response()
+    }
+}
+
+// ── FastAPI-compatible 422 validation error ───────────────────────────────────
+
+/// A single validation failure — matches FastAPI/Pydantic v2 wire format exactly.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidationDetail {
+    #[serde(rename = "type")]
+    pub error_type: String,
+    pub loc: Vec<serde_json::Value>,
+    pub msg: String,
+    pub input: serde_json::Value,
+}
+
+/// 422 Unprocessable Entity body — matches FastAPI's `{"detail": [...]}` format.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidationErrors {
+    pub detail: Vec<ValidationDetail>,
+}
+
+impl ValidationErrors {
+    pub fn new(detail: Vec<ValidationDetail>) -> Self {
+        Self { detail }
+    }
+
+    /// Convert a `validator::ValidationErrors` map into FastAPI wire format.
+    pub fn from_validator(errors: &validator::ValidationErrors, location: &str) -> Self {
+        let mut detail = Vec::new();
+        for (field, field_errors) in errors.field_errors() {
+            for e in field_errors {
+                detail.push(ValidationDetail {
+                    error_type: e.code.to_string(),
+                    loc: vec![
+                        serde_json::Value::String(location.to_string()),
+                        serde_json::Value::String(field.to_string()),
+                    ],
+                    msg: e.message.as_ref()
+                        .map(|m| m.to_string())
+                        .unwrap_or_else(|| e.code.to_string()),
+                    input: serde_json::Value::Null,
+                });
+            }
+        }
+        Self { detail }
+    }
+}
+
+impl IntoResponse for ValidationErrors {
+    fn into_response(self) -> Response {
+        use http_body_util::BodyExt;
+        let body = serde_json::to_vec(&self).unwrap_or_default();
+        http::Response::builder()
+            .status(http::StatusCode::UNPROCESSABLE_ENTITY)
+            .header("content-type", "application/json")
+            .body(
+                http_body_util::Full::new(bytes::Bytes::from(body)).boxed()
+            )
+            .unwrap()
     }
 }
 

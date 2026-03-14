@@ -112,6 +112,84 @@ impl IntoResponse for Redirect {
     }
 }
 
+// ── NdjsonResponse<S> — streaming NDJSON ─────────────────────────────────────
+
+use futures_util::stream::Stream;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+/// Streaming newline-delimited JSON response.
+///
+/// Each item yielded by `S` is serialized as a JSON object followed by `\n`.
+/// Sets `Content-Type: application/x-ndjson` and `X-Accel-Buffering: no`
+/// (disables nginx/proxy response buffering).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// async fn stream_items() -> NdjsonResponse<impl Stream<Item = Item>> {
+///     let stream = futures_util::stream::iter(vec![Item { id: 1 }, Item { id: 2 }]);
+///     NdjsonResponse::new(stream)
+/// }
+/// ```
+pub struct NdjsonResponse<S> {
+    stream: S,
+}
+
+impl<S> NdjsonResponse<S> {
+    pub fn new(stream: S) -> Self {
+        Self { stream }
+    }
+}
+
+/// Internal streaming body that serializes each item as NDJSON.
+struct NdjsonBody<S> {
+    stream: Pin<Box<S>>,
+}
+
+impl<S, T> http_body::Body for NdjsonBody<S>
+where
+    S: Stream<Item = T>,
+    T: serde::Serialize,
+{
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        match self.stream.as_mut().poll_next(cx) {
+            Poll::Ready(Some(item)) => {
+                let mut json = serde_json::to_vec(&item).unwrap_or_else(|e| {
+                    format!("{{\"error\":\"{e}\"}}").into_bytes()
+                });
+                json.push(b'\n');
+                Poll::Ready(Some(Ok(http_body::Frame::data(Bytes::from(json)))))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl<S, T> IntoResponse for NdjsonResponse<S>
+where
+    S: Stream<Item = T> + Send + Sync + 'static,
+    T: serde::Serialize,
+{
+    fn into_response(self) -> Response {
+        let body = NdjsonBody { stream: Box::pin(self.stream) };
+        http::Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/x-ndjson")
+            .header("x-accel-buffering", "no")
+            .header("cache-control", "no-cache")
+            .body(body.boxed())
+            .expect("response builder infallible")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

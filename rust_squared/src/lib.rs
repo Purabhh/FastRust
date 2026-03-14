@@ -18,12 +18,17 @@ pub mod static_files;
 #[cfg(feature = "websocket")]
 pub mod ws;
 pub mod state;
+pub mod testing;
 
 pub use http::Method;
 pub use serde_json;
 pub use app::RsqApp;
-pub use error::RsqError;
-pub use extract::{ClientIp, FromRequest, Handler, Headers, Json, Path, Query, RawBody, State};
+pub use error::{RsqError, ValidationDetail, ValidationErrors};
+pub use extract::{
+    ClientIp, Depends, FromDependency, FromRequest, Handler,
+    Headers, Json, Pagination, Path, Query, RawBody, State,
+    ValidatedJson, ValidatedQuery,
+};
 pub use middleware::{
     BearerAuthMiddleware, CorsMiddleware, CsrfMiddleware,
     LoggingMiddleware, MaxBodySizeMiddleware, Next, RateLimitMiddleware,
@@ -38,7 +43,7 @@ pub use static_files::{StaticFiles, ServeDir};
 pub use openapi::{build_spec, openapi_response, swagger_ui_response};
 pub use request::{RequestContext, RsqRequestBody};
 
-pub use response::{Html, IntoResponse, Redirect, Response, RsqBody};
+pub use response::{Html, IntoResponse, NdjsonResponse, Redirect, Response, RsqBody};
 
 pub use router::{MethodNotAllowed, Route, RouteMeta, Router};
 pub use schema::RsqSchema;
