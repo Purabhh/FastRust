@@ -1,9 +1,13 @@
-use std::collections::HashMap;
-use std::io::Write;
 use std::sync::Arc;
+
+use dashmap::DashMap;
 use std::time::Duration;
 
+#[cfg(feature = "compression")]
+use std::io::Write;
+#[cfg(feature = "compression")]
 use flate2::Compression;
+#[cfg(feature = "compression")]
 use flate2::write::GzEncoder;
 use futures_util::future::BoxFuture;
 use http_body_util::BodyExt;
@@ -288,7 +292,7 @@ impl TokenBucket {
 pub struct RateLimitMiddleware {
     requests_per_second: f64,
     burst_size: f64,
-    buckets: Arc<std::sync::Mutex<HashMap<String, TokenBucket>>>,
+    buckets: Arc<DashMap<String, TokenBucket>>,
 }
 
 impl RateLimitMiddleware {
@@ -296,7 +300,7 @@ impl RateLimitMiddleware {
         Self {
             requests_per_second,
             burst_size: burst_size as f64,
-            buckets: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            buckets: Arc::new(DashMap::new()),
         }
     }
 }
@@ -325,8 +329,7 @@ impl RsqMiddleware for RateLimitMiddleware {
                 .unwrap_or_else(|| "0.0.0.0".to_string());
 
             let allowed = {
-                let mut buckets = self.buckets.lock().expect("rate limit lock poisoned");
-                let bucket = buckets
+                let mut bucket = self.buckets
                     .entry(key)
                     .or_insert_with(|| TokenBucket::new(self.requests_per_second, self.burst_size));
                 bucket.try_consume()
@@ -348,11 +351,13 @@ impl RsqMiddleware for RateLimitMiddleware {
 
 // ── Task 2.4: CompressionMiddleware ──────────────────────────────────────────
 
+#[cfg(feature = "compression")]
 #[derive(Clone, Debug)]
 pub struct CompressionMiddleware {
     min_size: usize,
 }
 
+#[cfg(feature = "compression")]
 impl CompressionMiddleware {
     pub fn new() -> Self {
         Self { min_size: 256 }
@@ -364,12 +369,14 @@ impl CompressionMiddleware {
     }
 }
 
+#[cfg(feature = "compression")]
 impl Default for CompressionMiddleware {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "compression")]
 impl RsqMiddleware for CompressionMiddleware {
     fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
         Box::pin(async move {
@@ -619,14 +626,20 @@ impl CsrfMiddleware {
     }
 
     fn generate_token(&self) -> String {
-        use rand::Rng;
+        use rand::RngCore;
         let mut rng = rand::thread_rng();
-        let bytes: Vec<u8> = (0..self.token_length).map(|_| rng.r#gen::<u8>()).collect();
-        use std::fmt::Write;
-        bytes.iter().fold(String::new(), |mut acc, b| {
-            let _ = write!(acc, "{b:02x}");
-            acc
-        })
+        // Stack-allocate up to 64 bytes; fall back to heap for unusual lengths.
+        // Default token_length is 32, so this is always stack-resident (F7).
+        let mut buf = smallvec::SmallVec::<[u8; 64]>::from_elem(0u8, self.token_length);
+        rng.fill_bytes(&mut buf);
+        // Pre-allocate the exact output capacity — one allocation total.
+        let mut out = String::with_capacity(self.token_length * 2);
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        for &b in buf.iter() {
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0xf) as usize] as char);
+        }
+        out
     }
 
     fn extract_cookie_value<'a>(&self, cookie_header: &'a str) -> Option<&'a str> {
@@ -1330,6 +1343,53 @@ mod tests {
         // peer_b (different IP, same XFF) should still be allowed.
         let r4 = mw.handle(make_ctx(Some(peer_b), "9.9.9.9"), Next::new(Arc::new(Vec::new()), route.clone())).await.unwrap();
         assert_eq!(r4.status(), StatusCode::OK);
+    }
+
+    // ── G3: concurrent stress test — no panics/deadlocks under load ─────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn rate_limit_concurrent_no_panic_or_deadlock() {
+        use std::net::SocketAddr;
+
+        // High rate/burst so requests are unlikely to be rate-limited; the goal is to
+        // verify that 20 concurrent tasks driving the same DashMap instance neither
+        // panic nor deadlock.
+        let mw = Arc::new(RateLimitMiddleware::new(1000.0, 1000));
+        let route = Route::new(Method::GET, "/", |_| async { Ok::<_, crate::RsqError>("ok") });
+
+        let handles: Vec<_> = (0..20u8)
+            .map(|i| {
+                let mw = Arc::clone(&mw);
+                let route = route.clone();
+                tokio::spawn(async move {
+                    let peer: SocketAddr = format!("10.0.0.{}:8080", i % 5).parse().unwrap();
+                    let request = Request::builder()
+                        .method(Method::GET)
+                        .uri("/")
+                        .body(())
+                        .unwrap();
+                    let (parts, _) = request.into_parts();
+                    let ctx = RequestContext::new(
+                        parts,
+                        RsqRequestBody::Buffered(Bytes::new()),
+                        Default::default(),
+                        AppState::new(),
+                        Some(peer),
+                    );
+                    mw.handle(ctx, Next::new(Arc::new(Vec::new()), route))
+                        .await
+                        .expect("handle must not return an error")
+                        .status()
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            // join() implicitly checks for panics — a panic in any task propagates here.
+            let status = handle.await.expect("task must not panic");
+            // All requests should be allowed given the generous burst.
+            assert_eq!(status, StatusCode::OK);
+        }
     }
 
     // ── A4 regression: application/jsonp must be rejected ───────────────

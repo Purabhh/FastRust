@@ -32,7 +32,7 @@ impl Router {
 
     pub fn insert(&mut self, route: Route) -> Result<(), RsqError> {
         let index = self.routes.len();
-        self.trie.insert(route.pattern(), route.method().clone(), index)?;
+        self.trie.insert(route.pattern(), route.method(), index)?;
         self.routes.push(route);
         Ok(())
     }

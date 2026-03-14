@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use http::Method;
 use percent_encoding::percent_decode_str;
+use smallvec::SmallVec;
 
 use crate::error::RsqError;
 
@@ -18,7 +19,7 @@ impl TrieNode {
     pub fn insert(
         &mut self,
         pattern: &str,
-        method: Method,
+        method: &Method,
         route_index: usize,
     ) -> Result<(), RsqError> {
         let segments = normalize_path(pattern);
@@ -58,11 +59,13 @@ impl TrieNode {
 
     pub fn find(&self, path: &str, method: &Method) -> Match {
         let segments = normalize_path(path);
+        // params is owned here; find_inner mutates it via &mut reference.
+        // On a successful match we move it directly — no clone needed (F4).
         let mut params = PathParams::default();
         match self.find_inner(&segments, 0, &mut params, method) {
-            Some(Match::Found(index, found_params)) => Match::Found(index, found_params),
-            Some(Match::MethodNotAllowed(methods)) => Match::MethodNotAllowed(methods),
-            Some(Match::NotFound) | None => Match::NotFound,
+            Some(FindResult::Found(index)) => Match::Found(index, params),
+            Some(FindResult::MethodNotAllowed(methods)) => Match::MethodNotAllowed(methods),
+            None => Match::NotFound,
         }
     }
 
@@ -72,13 +75,14 @@ impl TrieNode {
         depth: usize,
         params: &mut PathParams,
         method: &Method,
-    ) -> Option<Match> {
+    ) -> Option<FindResult> {
         if depth == segments.len() {
             if let Some(index) = self.route_indices.get(method) {
-                return Some(Match::Found(*index, params.clone()));
+                // Return only the index; params are already in the caller's mut ref.
+                return Some(FindResult::Found(*index));
             }
             if !self.route_indices.is_empty() {
-                return Some(Match::MethodNotAllowed(
+                return Some(FindResult::MethodNotAllowed(
                     self.route_indices.keys().cloned().collect(),
                 ));
             }
@@ -106,6 +110,13 @@ impl TrieNode {
     }
 }
 
+/// Internal result type for find_inner — params are threaded via &mut ref so
+/// we don't carry them in this enum (avoids the clone at every match leaf).
+enum FindResult {
+    Found(usize),
+    MethodNotAllowed(Vec<Method>),
+}
+
 pub enum Match {
     Found(usize, PathParams),
     MethodNotAllowed(Vec<Method>),
@@ -116,10 +127,12 @@ fn is_param(segment: &str) -> bool {
     segment.starts_with('{') && segment.ends_with('}') && segment.len() > 2
 }
 
-pub fn normalize_path(path: &str) -> Vec<&str> {
+/// Split a URL path into segments without heap-allocating for paths with ≤8
+/// segments (F5). Uses SmallVec to stay on the stack for typical paths.
+pub fn normalize_path(path: &str) -> SmallVec<[&str; 8]> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
-        Vec::new()
+        SmallVec::new()
     } else {
         trimmed.split('/').collect()
     }

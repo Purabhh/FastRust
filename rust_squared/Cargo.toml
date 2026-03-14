@@ -23,13 +23,45 @@ serde_urlencoded.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-flate2.workspace = true
-tokio-rustls.workspace = true
-rustls.workspace = true
-rustls-pemfile.workspace = true
+flate2 = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rustls-pemfile = { workspace = true, optional = true }
 rand.workspace = true
-tokio-tungstenite.workspace = true
+tokio-tungstenite = { workspace = true, optional = true }
+dashmap.workspace = true
+smallvec = { version = "1", features = ["union"] }
 rust_squared_macros = { path = "../rust_squared_macros" }
+
+[features]
+default = ["compression", "tls"]
+tls = ["dep:tokio-rustls", "dep:rustls", "dep:rustls-pemfile"]
+compression = ["dep:flate2"]
+websocket = ["dep:tokio-tungstenite"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+criterion = { version = "0.5", features = ["async_tokio"] }
+bytes = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+
+[[bench]]
+name = "routing_bench"
+harness = false
+
+[[bench]]
+name = "throughput_bench"
+harness = false
+
+[[bench]]
+name = "middleware_bench"
+harness = false
+
+[[bench]]
+name = "extraction_bench"
+harness = false
+
+[[bench]]
+name = "concurrent_bench"
+harness = false

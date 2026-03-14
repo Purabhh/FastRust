@@ -236,6 +236,102 @@ where
     })
 }
 
+fn extract_5<F, Fut, Res, A, B, C, D, E>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
+where
+    F: Fn(A, B, C, D, E) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+{
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        let e = E::from_request(&mut ctx).await?;
+        handler(a, b, c, d, e).await.map(IntoResponse::into_response)
+    })
+}
+
+fn extract_6<F, Fut, Res, A, B, C, D, E, G>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
+where
+    F: Fn(A, B, C, D, E, G) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+{
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        let e = E::from_request(&mut ctx).await?;
+        let g = G::from_request(&mut ctx).await?;
+        handler(a, b, c, d, e, g).await.map(IntoResponse::into_response)
+    })
+}
+
+fn extract_7<F, Fut, Res, A, B, C, D, E, G, H>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
+where
+    F: Fn(A, B, C, D, E, G, H) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+{
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        let e = E::from_request(&mut ctx).await?;
+        let g = G::from_request(&mut ctx).await?;
+        let h = H::from_request(&mut ctx).await?;
+        handler(a, b, c, d, e, g, h).await.map(IntoResponse::into_response)
+    })
+}
+
+fn extract_8<F, Fut, Res, A, B, C, D, E, G, H, I>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
+where
+    F: Fn(A, B, C, D, E, G, H, I) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+{
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        let e = E::from_request(&mut ctx).await?;
+        let g = G::from_request(&mut ctx).await?;
+        let h = H::from_request(&mut ctx).await?;
+        let i = I::from_request(&mut ctx).await?;
+        handler(a, b, c, d, e, g, h, i).await.map(IntoResponse::into_response)
+    })
+}
+
 impl<F, Fut, Res, A> Handler<(A,)> for F
 where
     F: Fn(A) -> Fut + Clone + Send + Sync + 'static,
@@ -298,6 +394,132 @@ where
     }
 }
 
+impl<F, Fut, Res, A, B, C, D, E> Handler<(A, B, C, D, E)> for F
+where
+    F: Fn(A, B, C, D, E) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+{
+    fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
+        crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
+            extract_5(self.clone(), ctx)
+        }))
+    }
+}
+
+impl<F, Fut, Res, A, B, C, D, E, G> Handler<(A, B, C, D, E, G)> for F
+where
+    F: Fn(A, B, C, D, E, G) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+{
+    fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
+        crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
+            extract_6(self.clone(), ctx)
+        }))
+    }
+}
+
+impl<F, Fut, Res, A, B, C, D, E, G, H> Handler<(A, B, C, D, E, G, H)> for F
+where
+    F: Fn(A, B, C, D, E, G, H) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+{
+    fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
+        crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
+            extract_7(self.clone(), ctx)
+        }))
+    }
+}
+
+impl<F, Fut, Res, A, B, C, D, E, G, H, I> Handler<(A, B, C, D, E, G, H, I)> for F
+where
+    F: Fn(A, B, C, D, E, G, H, I) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+{
+    fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
+        crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
+            extract_8(self.clone(), ctx)
+        }))
+    }
+}
+
+// ── New extractors ────────────────────────────────────────────────────────────
+
+pub struct Headers(pub http::HeaderMap);
+
+#[async_trait]
+impl FromRequest for Headers {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
+        Ok(Headers(ctx.headers().clone()))
+    }
+}
+
+pub struct RawBody(pub bytes::Bytes);
+
+#[async_trait]
+impl FromRequest for RawBody {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
+        Ok(RawBody(ctx.take_body_bytes().await?))
+    }
+}
+
+pub struct ClientIp(pub std::net::IpAddr);
+
+#[async_trait]
+impl FromRequest for ClientIp {
+    async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
+        if let Some(addr) = ctx.peer_addr() {
+            return Ok(ClientIp(addr.ip()));
+        }
+        if let Some(val) = ctx.headers().get("x-real-ip") {
+            if let Ok(s) = val.to_str() {
+                if let Ok(ip) = s.trim().parse::<std::net::IpAddr>() {
+                    return Ok(ClientIp(ip));
+                }
+            }
+        }
+        if let Some(val) = ctx.headers().get("x-forwarded-for") {
+            if let Ok(s) = val.to_str() {
+                if let Some(first) = s.split(',').next() {
+                    if let Ok(ip) = first.trim().parse::<std::net::IpAddr>() {
+                        return Ok(ClientIp(ip));
+                    }
+                }
+            }
+        }
+        Err(RsqError::bad_request("could not determine client IP"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
@@ -305,7 +527,7 @@ mod tests {
     use http_body_util::Full;
     use serde::{Deserialize, Serialize};
 
-    use super::{Json, Path, Query, State};
+    use super::{ClientIp, Headers, Json, Path, Query, RawBody, State};
     use crate::RsqApp;
 
     #[derive(Debug, Deserialize)]
@@ -385,5 +607,94 @@ mod tests {
             .await;
 
         assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn headers_extractor_returns_request_headers() {
+        async fn handler(Headers(map): Headers) -> Result<StatusCode, crate::RsqError> {
+            assert!(map.contains_key("x-test-header"));
+            Ok(StatusCode::OK)
+        }
+
+        let app = RsqApp::new().get("/headers", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/headers")
+                    .header("x-test-header", "hello")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn raw_body_extractor_returns_body_bytes() {
+        async fn handler(RawBody(body): RawBody) -> Result<StatusCode, crate::RsqError> {
+            assert_eq!(body.as_ref(), b"hello world");
+            Ok(StatusCode::OK)
+        }
+
+        let app = RsqApp::new().post("/body", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/body")
+                    .body(Full::new(Bytes::from_static(b"hello world")))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn client_ip_extractor_falls_back_to_x_forwarded_for() {
+        async fn handler(ClientIp(ip): ClientIp) -> Result<StatusCode, crate::RsqError> {
+            assert_eq!(ip.to_string(), "1.2.3.4");
+            Ok(StatusCode::OK)
+        }
+
+        let app = RsqApp::new().get("/ip", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ip")
+                    .header("x-forwarded-for", "1.2.3.4, 5.6.7.8")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn client_ip_extractor_returns_error_when_no_ip_available() {
+        async fn handler(ClientIp(_ip): ClientIp) -> Result<StatusCode, crate::RsqError> {
+            Ok(StatusCode::OK)
+        }
+
+        let app = RsqApp::new().get("/ip", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ip")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

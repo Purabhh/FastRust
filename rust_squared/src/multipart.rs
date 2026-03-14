@@ -97,11 +97,8 @@ fn parse_multipart(body: &[u8], boundary: &str) -> Result<Multipart, RsqError> {
     let mut search_start = 0usize;
 
     // Find all delimiter positions by byte searching
-    loop {
-        let delim_pos = match find_subsequence(&body[search_start..], delim_bytes) {
-            Some(p) => search_start + p,
-            None => break,
-        };
+    while let Some(p) = find_subsequence(&body[search_start..], delim_bytes) {
+        let delim_pos = search_start + p;
 
         // Check if this is the closing delimiter
         let after_delim = delim_pos + delim_bytes.len();

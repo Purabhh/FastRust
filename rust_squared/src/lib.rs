@@ -15,6 +15,7 @@ pub mod sanitize;
 pub mod schema;
 pub mod sse;
 pub mod static_files;
+#[cfg(feature = "websocket")]
 pub mod ws;
 pub mod state;
 
@@ -22,13 +23,15 @@ pub use http::Method;
 pub use serde_json;
 pub use app::RsqApp;
 pub use error::RsqError;
-pub use extract::{FromRequest, Handler, Json, Path, Query, State};
+pub use extract::{ClientIp, FromRequest, Handler, Headers, Json, Path, Query, RawBody, State};
 pub use middleware::{
-    BearerAuthMiddleware, CompressionMiddleware, CorsMiddleware, CsrfMiddleware,
+    BearerAuthMiddleware, CorsMiddleware, CsrfMiddleware,
     LoggingMiddleware, MaxBodySizeMiddleware, Next, RateLimitMiddleware,
     RequestIdMiddleware, RequestValidationMiddleware, RsqMiddleware,
     SecurityHeadersMiddleware, TimeoutMiddleware,
 };
+#[cfg(feature = "compression")]
+pub use middleware::CompressionMiddleware;
 pub use cookie::{CookieJar, set_cookie, set_cookie_with};
 pub use sanitize::{html_escape, is_safe_header_value, strip_null_bytes};
 pub use static_files::{StaticFiles, ServeDir};

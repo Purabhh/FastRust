@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::fs::File;
 use std::future::Future;
-use std::io::BufReader;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,6 +13,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as AutoBuilder;
 use tokio::net::TcpListener;
+#[cfg(feature = "tls")]
 use tokio_rustls::TlsAcceptor;
 
 use crate::error::RsqError;
@@ -50,6 +49,10 @@ impl RsqApp {
     where
         M: RsqMiddleware,
     {
+        // Safety: Arc::make_mut() is only called during the builder phase, before this Arc is
+        // shared with any other owner. If the Arc were already cloned (i.e. had multiple strong
+        // references), make_mut() would panic — that cannot happen here because the builder takes
+        // `self` by value and the Arc has not yet been handed out.
         Arc::make_mut(&mut self.middlewares).push(Arc::new(middleware));
         self
     }
@@ -63,6 +66,8 @@ impl RsqApp {
     where
         T: RsqSchema,
     {
+        // Same Arc::make_mut() invariant as middleware(): safe only during the build phase before
+        // the Arc is shared; would panic if called after the Arc has been cloned.
         Arc::make_mut(&mut self.schemas).insert(T::schema_name().to_string(), T::schema());
         self
     }
@@ -142,13 +147,14 @@ impl RsqApp {
         B::Error: std::error::Error + Send + Sync + 'static,
     {
         let method = request.method().clone();
-        let path = request.uri().path().to_string();
+        // Borrow path as &str from the URI — no allocation until we need to pass it forward.
+        let path: &str = request.uri().path();
 
-        if let Some(response) = self.docs_response(&method, &path) {
+        if let Some(response) = self.docs_response(&method, path) {
             return response;
         }
 
-        match self.router.find(&method, &path) {
+        match self.router.find(&method, path) {
             Ok((route, params)) => match RequestContext::from_request(request, params, self.state.clone()).await {
                 Ok(ctx) => match Next::new(Arc::clone(&self.middlewares), route.clone()).run(ctx).await {
                     Ok(response) => response,
@@ -167,13 +173,14 @@ impl RsqApp {
 
     pub async fn handle_incoming_with_addr(&self, request: Request<Incoming>, addr: SocketAddr) -> Response {
         let method = request.method().clone();
-        let path = request.uri().path().to_string();
+        // Borrow path as &str from the URI — no allocation on this hot path.
+        let path: &str = request.uri().path();
 
-        if let Some(response) = self.docs_response(&method, &path) {
+        if let Some(response) = self.docs_response(&method, path) {
             return response;
         }
 
-        match self.router.find(&method, &path) {
+        match self.router.find(&method, path) {
             Ok((route, params)) => {
                 let ctx = RequestContext::from_incoming(request, params, self.state.clone(), Some(addr));
                 match Next::new(Arc::clone(&self.middlewares), route.clone()).run(ctx).await {
@@ -206,6 +213,7 @@ impl RsqApp {
         self.serve_listener_with_shutdown(listener, signal).await
     }
 
+    #[cfg(feature = "tls")]
     pub async fn serve_tls(
         self,
         addr: SocketAddr,
@@ -318,20 +326,21 @@ impl RsqApp {
         Ok(())
     }
 
+    #[cfg(feature = "tls")]
     fn build_tls_acceptor(
         &self,
         cert_path: impl AsRef<std::path::Path>,
         key_path: impl AsRef<std::path::Path>,
     ) -> Result<TlsAcceptor, RsqError> {
-        let cert_file = File::open(cert_path.as_ref())
+        let cert_file = std::fs::File::open(cert_path.as_ref())
             .map_err(|e| RsqError::internal(format!("failed to open cert file: {e}")))?;
-        let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
+        let certs: Vec<_> = rustls_pemfile::certs(&mut std::io::BufReader::new(cert_file))
             .collect::<Result<_, _>>()
             .map_err(|e| RsqError::internal(format!("failed to parse certs: {e}")))?;
 
-        let key_file = File::open(key_path.as_ref())
+        let key_file = std::fs::File::open(key_path.as_ref())
             .map_err(|e| RsqError::internal(format!("failed to open key file: {e}")))?;
-        let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
+        let key = rustls_pemfile::private_key(&mut std::io::BufReader::new(key_file))
             .map_err(|e| RsqError::internal(format!("failed to parse private key: {e}")))?
             .ok_or_else(|| RsqError::internal("no private key found in file"))?;
 
