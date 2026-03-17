@@ -32,7 +32,6 @@ rand.workspace = true
 tokio-tungstenite = { workspace = true, optional = true }
 dashmap.workspace = true
 smallvec = { version = "1", features = ["union"] }
-anymap2 = "0.13"
 rust_squared_macros = { path = "../rust_squared_macros" }
 
 [features]
