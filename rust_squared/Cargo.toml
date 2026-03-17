@@ -31,6 +31,7 @@ rustls-pemfile = { workspace = true, optional = true }
 rand.workspace = true
 tokio-tungstenite = { workspace = true, optional = true }
 dashmap.workspace = true
+subtle.workspace = true
 smallvec = { version = "1", features = ["union"] }
 rust_squared_macros = { path = "../rust_squared_macros" }
 

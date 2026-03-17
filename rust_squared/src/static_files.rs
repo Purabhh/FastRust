@@ -63,9 +63,15 @@ impl StaticFiles {
 
                 let full_path = dir.join(relative);
 
-                // Canonical path-traversal guard: resolved path must stay
-                // inside the served directory.
-                if !full_path.starts_with(dir.as_ref()) {
+                // fix: path traversal guard used unresolved path; symlinks could escape served dir
+                // canonicalize is sync but acceptable here — it's a single stat syscall
+                let canonical_dir = std::fs::canonicalize(dir.as_ref())
+                    .unwrap_or_else(|_| dir.as_ref().to_path_buf());
+                let canonical_full = match std::fs::canonicalize(&full_path) {
+                    Ok(p) => p,
+                    Err(_) => return Err(RsqError::not_found("file not found")),
+                };
+                if !canonical_full.starts_with(&canonical_dir) {
                     return Err(RsqError::not_found("file not found"));
                 }
 
