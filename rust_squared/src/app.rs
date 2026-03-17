@@ -26,6 +26,19 @@ use crate::router::{MethodNotAllowed, Route, Router};
 use crate::schema::RsqSchema;
 use crate::state::AppState;
 
+/// The main application builder and request dispatcher.
+///
+/// # Builder-phase invariant (M-6)
+///
+/// `.middleware()` and `.schema()` use `Arc::make_mut` to mutate the inner
+/// `Arc`-wrapped collections. This is safe **only** during the builder phase,
+/// before the `Arc` is shared with any other owner (e.g. before `serve` or
+/// `serve_listener` is called and the `Arc` is cloned for each connection).
+/// Calling these methods after the `Arc` has been cloned would cause
+/// `Arc::make_mut` to silently clone the inner value (copy-on-write), meaning
+/// the new middleware/schema would **not** be visible to the already-running
+/// server. Always complete all builder calls before handing the app to a
+/// server function.
 #[derive(Clone, Default)]
 pub struct RsqApp {
     router: Router,
@@ -387,10 +400,11 @@ fn method_not_allowed_response(allowed: Vec<Method>) -> Response {
         .collect::<Vec<_>>()
         .join(", ");
     let mut response = RsqError::method_not_allowed("method not allowed").into_response();
-    response.headers_mut().insert(
-        http::header::ALLOW,
-        allow.parse().expect("allow header should be valid"),
-    );
+    // fix(H-6): custom method names with invalid header chars caused panic;
+    // if we can't set the Allow header, still return 405 without crashing.
+    if let Ok(v) = allow.parse::<http::HeaderValue>() {
+        response.headers_mut().insert(http::header::ALLOW, v);
+    } // if parse fails, still return 405 without crashing
     response
 }
 

@@ -103,12 +103,17 @@ impl Redirect {
 impl IntoResponse for Redirect {
     fn into_response(self) -> Response {
         let mut response = build_response(self.status, Bytes::new());
-        response.headers_mut().insert(
-            http::header::LOCATION,
-            http::HeaderValue::from_str(&self.location)
-                .expect("redirect URL should be a valid header value"),
-        );
-        response
+        // fix(H-3): non-ASCII redirect URL caused panic; now returns 500 instead
+        match http::HeaderValue::from_str(&self.location) {
+            Ok(v) => {
+                response.headers_mut().insert(http::header::LOCATION, v);
+                response
+            }
+            Err(_) => build_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Bytes::from_static(b"invalid redirect URL"),
+            ),
+        }
     }
 }
 

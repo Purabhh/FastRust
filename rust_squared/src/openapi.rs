@@ -9,9 +9,11 @@ pub fn build_spec(routes: &[Route], schemas: &HashMap<String, Value>) -> Value {
     let mut paths = serde_json::Map::new();
 
     for route in routes {
+        // fix(L-3): do NOT strip trailing slashes — routes like `/users/` and
+        // `/users` are distinct in OpenAPI and must appear as separate paths.
         let openapi_path = {
-            let trimmed = route.pattern().trim_end_matches('/');
-            if trimmed.is_empty() { "/".to_string() } else { trimmed.to_string() }
+            let p = route.pattern();
+            if p.is_empty() { "/".to_string() } else { p.to_string() }
         };
         let path_item = paths
             .entry(openapi_path)
