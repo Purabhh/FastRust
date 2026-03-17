@@ -334,6 +334,134 @@ where
     })
 }
 
+fn extract_9<F, Fut, Res, A, B, C, D, E, G, H, I, J>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
+where
+    F: Fn(A, B, C, D, E, G, H, I, J) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+    J: FromRequest + Send + 'static,
+{
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        let e = E::from_request(&mut ctx).await?;
+        let g = G::from_request(&mut ctx).await?;
+        let h = H::from_request(&mut ctx).await?;
+        let i = I::from_request(&mut ctx).await?;
+        let j = J::from_request(&mut ctx).await?;
+        handler(a, b, c, d, e, g, h, i, j).await.map(IntoResponse::into_response)
+    })
+}
+
+fn extract_10<F, Fut, Res, A, B, C, D, E, G, H, I, J, K>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
+where
+    F: Fn(A, B, C, D, E, G, H, I, J, K) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+    J: FromRequest + Send + 'static,
+    K: FromRequest + Send + 'static,
+{
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        let e = E::from_request(&mut ctx).await?;
+        let g = G::from_request(&mut ctx).await?;
+        let h = H::from_request(&mut ctx).await?;
+        let i = I::from_request(&mut ctx).await?;
+        let j = J::from_request(&mut ctx).await?;
+        let k = K::from_request(&mut ctx).await?;
+        handler(a, b, c, d, e, g, h, i, j, k).await.map(IntoResponse::into_response)
+    })
+}
+
+fn extract_11<F, Fut, Res, A, B, C, D, E, G, H, I, J, K, L>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
+where
+    F: Fn(A, B, C, D, E, G, H, I, J, K, L) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+    J: FromRequest + Send + 'static,
+    K: FromRequest + Send + 'static,
+    L: FromRequest + Send + 'static,
+{
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        let e = E::from_request(&mut ctx).await?;
+        let g = G::from_request(&mut ctx).await?;
+        let h = H::from_request(&mut ctx).await?;
+        let i = I::from_request(&mut ctx).await?;
+        let j = J::from_request(&mut ctx).await?;
+        let k = K::from_request(&mut ctx).await?;
+        let l = L::from_request(&mut ctx).await?;
+        handler(a, b, c, d, e, g, h, i, j, k, l).await.map(IntoResponse::into_response)
+    })
+}
+
+fn extract_12<F, Fut, Res, A, B, C, D, E, G, H, I, J, K, L, M>(handler: F, mut ctx: RequestContext) -> BoxFuture<'static, Result<Response, RsqError>>
+where
+    F: Fn(A, B, C, D, E, G, H, I, J, K, L, M) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+    J: FromRequest + Send + 'static,
+    K: FromRequest + Send + 'static,
+    L: FromRequest + Send + 'static,
+    M: FromRequest + Send + 'static,
+{
+    Box::pin(async move {
+        let a = A::from_request(&mut ctx).await?;
+        let b = B::from_request(&mut ctx).await?;
+        let c = C::from_request(&mut ctx).await?;
+        let d = D::from_request(&mut ctx).await?;
+        let e = E::from_request(&mut ctx).await?;
+        let g = G::from_request(&mut ctx).await?;
+        let h = H::from_request(&mut ctx).await?;
+        let i = I::from_request(&mut ctx).await?;
+        let j = J::from_request(&mut ctx).await?;
+        let k = K::from_request(&mut ctx).await?;
+        let l = L::from_request(&mut ctx).await?;
+        let m = M::from_request(&mut ctx).await?;
+        handler(a, b, c, d, e, g, h, i, j, k, l, m).await.map(IntoResponse::into_response)
+    })
+}
+
 impl<F, Fut, Res, A> Handler<(A,)> for F
 where
     F: Fn(A) -> Fut + Clone + Send + Sync + 'static,
@@ -474,6 +602,100 @@ where
     }
 }
 
+impl<F, Fut, Res, A, B, C, D, E, G, H, I, J> Handler<(A, B, C, D, E, G, H, I, J)> for F
+where
+    F: Fn(A, B, C, D, E, G, H, I, J) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+    J: FromRequest + Send + 'static,
+{
+    fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
+        crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
+            extract_9(self.clone(), ctx)
+        }))
+    }
+}
+
+impl<F, Fut, Res, A, B, C, D, E, G, H, I, J, K> Handler<(A, B, C, D, E, G, H, I, J, K)> for F
+where
+    F: Fn(A, B, C, D, E, G, H, I, J, K) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+    J: FromRequest + Send + 'static,
+    K: FromRequest + Send + 'static,
+{
+    fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
+        crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
+            extract_10(self.clone(), ctx)
+        }))
+    }
+}
+
+impl<F, Fut, Res, A, B, C, D, E, G, H, I, J, K, L> Handler<(A, B, C, D, E, G, H, I, J, K, L)> for F
+where
+    F: Fn(A, B, C, D, E, G, H, I, J, K, L) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+    J: FromRequest + Send + 'static,
+    K: FromRequest + Send + 'static,
+    L: FromRequest + Send + 'static,
+{
+    fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
+        crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
+            extract_11(self.clone(), ctx)
+        }))
+    }
+}
+
+impl<F, Fut, Res, A, B, C, D, E, G, H, I, J, K, L, M> Handler<(A, B, C, D, E, G, H, I, J, K, L, M)> for F
+where
+    F: Fn(A, B, C, D, E, G, H, I, J, K, L, M) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<Res, RsqError>> + Send + 'static,
+    Res: IntoResponse + 'static,
+    A: FromRequest + Send + 'static,
+    B: FromRequest + Send + 'static,
+    C: FromRequest + Send + 'static,
+    D: FromRequest + Send + 'static,
+    E: FromRequest + Send + 'static,
+    G: FromRequest + Send + 'static,
+    H: FromRequest + Send + 'static,
+    I: FromRequest + Send + 'static,
+    J: FromRequest + Send + 'static,
+    K: FromRequest + Send + 'static,
+    L: FromRequest + Send + 'static,
+    M: FromRequest + Send + 'static,
+{
+    fn into_route(self, method: http::Method, pattern: String) -> crate::router::Route {
+        crate::router::Route::from_boxed(method, pattern, std::sync::Arc::new(move |ctx| {
+            extract_12(self.clone(), ctx)
+        }))
+    }
+}
+
 // ── New extractors ────────────────────────────────────────────────────────────
 
 pub struct Headers(pub http::HeaderMap);
@@ -563,8 +785,9 @@ where
             let ve = crate::error::ValidationErrors::from_validator(&e, "body");
             RsqError::new(
                 http::StatusCode::UNPROCESSABLE_ENTITY,
-                serde_json::to_string(&ve).unwrap_or_default(),
+                "Validation failed",
             )
+            .with_body(serde_json::to_value(&ve).unwrap_or_default())
         })?;
 
         Ok(Self(value))
@@ -598,8 +821,9 @@ where
             let ve = crate::error::ValidationErrors::from_validator(&e, "query");
             RsqError::new(
                 http::StatusCode::UNPROCESSABLE_ENTITY,
-                serde_json::to_string(&ve).unwrap_or_default(),
+                "Validation failed",
             )
+            .with_body(serde_json::to_value(&ve).unwrap_or_default())
         })?;
 
         Ok(Self(value))

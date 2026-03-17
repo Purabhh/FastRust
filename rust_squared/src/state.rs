@@ -4,6 +4,31 @@ use std::sync::Arc;
 
 use crate::error::RsqError;
 
+/// Type-keyed map for per-request dependency caching.
+/// Replaces the anymap2 dependency with a minimal internal implementation.
+pub(crate) struct TypeMap {
+    map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+}
+
+impl TypeMap {
+    pub(crate) fn new() -> Self {
+        Self { map: HashMap::new() }
+    }
+
+    pub(crate) fn insert<T: Any + Send + Sync>(&mut self, value: T) {
+        self.map.insert(TypeId::of::<T>(), Box::new(value));
+    }
+
+    pub(crate) fn get<T: Any + Send + Sync>(&self) -> Option<&T> {
+        self.map.get(&TypeId::of::<T>())
+            .and_then(|v| v.downcast_ref::<T>())
+    }
+}
+
+impl Default for TypeMap {
+    fn default() -> Self { Self::new() }
+}
+
 #[derive(Clone, Default)]
 pub struct AppState {
     entries: Arc<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,

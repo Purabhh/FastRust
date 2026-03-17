@@ -1,4 +1,3 @@
-use anymap2;
 use bytes::Bytes;
 use http::{HeaderMap, Method, Uri, request::Parts};
 use http_body_util::BodyExt;
@@ -23,7 +22,7 @@ pub struct RequestContext {
     state: AppState,
     peer_addr: Option<SocketAddr>,
     max_body_size: usize,
-    dep_cache: anymap2::SendSyncAnyMap,
+    dep_cache: crate::state::TypeMap,
 }
 
 impl RequestContext {
@@ -35,7 +34,7 @@ impl RequestContext {
             state,
             peer_addr,
             max_body_size: 1024 * 1024,
-            dep_cache: anymap2::SendSyncAnyMap::new(),
+            dep_cache: crate::state::TypeMap::new(),
         }
     }
 
@@ -113,7 +112,7 @@ impl RequestContext {
     }
 
     /// Access the per-request dependency cache.
-    pub fn dep_cache_mut(&mut self) -> &mut anymap2::SendSyncAnyMap {
+    pub(crate) fn dep_cache_mut(&mut self) -> &mut crate::state::TypeMap {
         &mut self.dep_cache
     }
 

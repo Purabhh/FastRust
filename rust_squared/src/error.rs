@@ -11,6 +11,7 @@ pub struct RsqError {
     message: String,
     context: Option<String>,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    body: Option<serde_json::Value>,
 }
 
 impl Clone for RsqError {
@@ -20,6 +21,7 @@ impl Clone for RsqError {
             message: self.message.clone(),
             context: self.context.clone(),
             source: None,
+            body: self.body.clone(),
         }
     }
 }
@@ -32,7 +34,13 @@ impl RsqError {
             message: message.into(),
             context: None,
             source: None,
+            body: None,
         }
+    }
+
+    pub fn with_body(mut self, body: serde_json::Value) -> Self {
+        self.body = Some(body);
+        self
     }
 
     #[track_caller]
@@ -101,7 +109,19 @@ impl std::error::Error for RsqError {
 
 impl IntoResponse for RsqError {
     fn into_response(self) -> Response {
-        (self.status, self.message).into_response()
+        if let Some(body) = self.body {
+            use http_body_util::BodyExt;
+            let bytes = serde_json::to_vec(&body).unwrap_or_default();
+            http::Response::builder()
+                .status(self.status)
+                .header("content-type", "application/json")
+                .body(
+                    http_body_util::Full::new(bytes::Bytes::from(bytes)).boxed()
+                )
+                .unwrap()
+        } else {
+            (self.status, self.message).into_response()
+        }
     }
 }
 
