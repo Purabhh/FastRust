@@ -202,3 +202,57 @@ mod tests {
         assert_eq!(cloned.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
+
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+    use validator::Validate;
+
+    // ── ValidationErrors::from_validator produces correct field path ──────────
+
+    #[test]
+    fn validation_errors_from_validator_produces_correct_field_path() {
+        #[derive(Validate)]
+        struct Form {
+            #[validate(length(min = 3))]
+            username: String,
+        }
+
+        let form = Form { username: "ab".to_string() };
+        let raw = form.validate().unwrap_err();
+        let ve = ValidationErrors::from_validator(&raw, "body");
+
+        assert!(!ve.detail.is_empty(), "must have at least one detail entry");
+        let detail = &ve.detail[0];
+
+        // Location path must be ["body", "username"]
+        assert_eq!(
+            detail.loc,
+            vec![
+                serde_json::Value::String("body".to_string()),
+                serde_json::Value::String("username".to_string()),
+            ],
+            "loc path must be [location, field_name]"
+        );
+
+        assert_eq!(
+            detail.error_type, "length",
+            "error_type must be the validator code"
+        );
+    }
+
+    // ── ValidationErrors::into_response sets 422 + JSON content-type ─────────
+
+    #[test]
+    fn validation_errors_into_response_has_correct_status_and_content_type() {
+        let ve = ValidationErrors::new(vec![ValidationDetail {
+            error_type: "required".to_string(),
+            loc: vec![serde_json::Value::String("body".to_string())],
+            msg: "field required".to_string(),
+            input: serde_json::Value::Null,
+        }]);
+        let response = ve.into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(response.headers()["content-type"], "application/json");
+    }
+}

@@ -1109,3 +1109,148 @@ mod tests {
         assert_eq!(body.trim(), "100", "got: {body}");
     }
 }
+
+#[cfg(test)]
+mod extra_tests {
+    use bytes::Bytes;
+    use http::{Method, Request, StatusCode};
+    use http_body_util::Full;
+    use serde::Deserialize;
+
+    use crate::RsqApp;
+
+    // ── Json extractor returns 422 on malformed JSON body ─────────────────────
+
+    #[tokio::test]
+    async fn json_extractor_returns_422_on_malformed_json() {
+        #[derive(Deserialize)]
+        struct Payload { name: String }
+
+        async fn handler(super::Json(p): super::Json<Payload>) -> Result<String, crate::RsqError> {
+            Ok(p.name)
+        }
+
+        let app = RsqApp::new().post("/echo", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/echo")
+                    .header("content-type", "application/json")
+                    .body(Full::new(Bytes::from_static(b"{{invalid")))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY,
+            "malformed JSON body must return 422");
+    }
+
+    // ── Query extractor returns 422 on type mismatch ───────────────────────────
+
+    #[tokio::test]
+    async fn query_extractor_returns_422_on_type_mismatch() {
+        #[derive(Deserialize)]
+        struct Q { count: u32 }
+
+        async fn handler(super::Query(q): super::Query<Q>) -> Result<String, crate::RsqError> {
+            Ok(format!("{}", q.count))
+        }
+
+        let app = RsqApp::new().get("/items", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/items?count=not_a_number")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY,
+            "query type mismatch must return 422");
+    }
+
+    // ── Path extractor returns 422 when param cannot be deserialized ───────────
+
+    #[tokio::test]
+    async fn path_extractor_returns_422_on_bad_param_type() {
+        #[derive(Deserialize)]
+        struct P { id: u64 }
+
+        async fn handler(super::Path(p): super::Path<P>) -> Result<String, crate::RsqError> {
+            Ok(format!("{}", p.id))
+        }
+
+        let app = RsqApp::new().get("/things/{id}", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/things/not_an_id")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY,
+            "path param type mismatch must return 422");
+    }
+
+    // ── RawBody extractor returns exact body bytes ─────────────────────────────
+
+    #[tokio::test]
+    async fn raw_body_extractor_returns_bytes() {
+        async fn handler(super::RawBody(body): super::RawBody) -> Result<StatusCode, crate::RsqError> {
+            assert_eq!(body.as_ref(), b"exact bytes here");
+            Ok(StatusCode::OK)
+        }
+
+        let app = RsqApp::new().post("/raw", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/raw")
+                    .body(Full::new(Bytes::from_static(b"exact bytes here")))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Pagination extractor uses defaults when params absent ──────────────────
+
+    #[tokio::test]
+    async fn pagination_extractor_uses_defaults_when_absent() {
+        async fn handler(p: super::Pagination) -> Result<String, crate::RsqError> {
+            Ok(format!("page={} per_page={} offset={}", p.page, p.per_page, p.offset()))
+        }
+
+        let app = RsqApp::new().get("/list", handler).unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/list")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        use http_body_util::BodyExt;
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains("page=1"), "default page must be 1; got: {body}");
+        assert!(body.contains("per_page=20"), "default per_page must be 20; got: {body}");
+        assert!(body.contains("offset=0"), "default offset must be 0; got: {body}");
+    }
+}
