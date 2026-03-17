@@ -1334,6 +1334,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "smallvec",
+ "subtle",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",

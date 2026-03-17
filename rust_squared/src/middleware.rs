@@ -76,17 +76,32 @@ impl Next {
 
 #[derive(Clone, Debug)]
 pub struct CorsMiddleware {
-    allow_origin: HeaderValue,
-    allow_methods: HeaderValue,
-    allow_headers: HeaderValue,
+    allow_origin: String,
+    allow_methods: String,
+    allow_headers: String,
+    allowed_origins: Option<Vec<String>>,
 }
 
 impl CorsMiddleware {
+    /// SECURITY WARNING: permissive() sets Access-Control-Allow-Origin: * — use with_origins() for production
     pub fn permissive() -> Self {
         Self {
-            allow_origin: HeaderValue::from_static("*"),
-            allow_methods: HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE, OPTIONS"),
-            allow_headers: HeaderValue::from_static("*"),
+            allow_origin: "*".to_string(),
+            allow_methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS".to_string(),
+            allow_headers: "*".to_string(),
+            allowed_origins: None,
+        }
+    }
+
+    /// Creates a CORS middleware that only allows the specified origins.
+    /// The `Origin` request header is validated against the allowlist.
+    /// A matching origin is reflected back; non-matching requests get no CORS headers.
+    pub fn with_origins(origins: Vec<impl Into<String>>) -> Self {
+        Self {
+            allow_origin: "*".to_string(), // unused when allowed_origins is Some
+            allow_methods: "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS".to_string(),
+            allow_headers: "Content-Type, Authorization, X-Request-Id".to_string(),
+            allowed_origins: Some(origins.into_iter().map(Into::into).collect()),
         }
     }
 }
@@ -112,8 +127,14 @@ impl RsqMiddleware for BearerAuthMiddleware {
                 .get(AUTHORIZATION)
                 .and_then(|value| value.to_str().ok())
                 .map(|value| {
-                    value.starts_with("Bearer ")
-                        && value[7..] == self.expected_token
+                    if !value.starts_with("Bearer ") {
+                        return false;
+                    }
+                    // fix: token comparison was non-constant-time, vulnerable to timing attacks
+                    use subtle::ConstantTimeEq;
+                    let provided = value[7..].as_bytes();
+                    let expected = self.expected_token.as_bytes();
+                    provided.len() == expected.len() && bool::from(provided.ct_eq(expected))
                 })
                 .unwrap_or(false);
 
@@ -151,25 +172,41 @@ impl RsqMiddleware for LoggingMiddleware {
 
 impl RsqMiddleware for CorsMiddleware {
     fn handle(&self, ctx: RequestContext, next: Next) -> BoxFuture<'_, Result<Response, RsqError>> {
+        // Determine the effective origin value based on allowlist
+        let effective_origin: Option<String> = match &self.allowed_origins {
+            None => {
+                // Wildcard / permissive mode
+                Some(self.allow_origin.clone())
+            }
+            Some(list) => {
+                // Reflect the request Origin only if it's in the allowlist
+                ctx.headers()
+                    .get("origin")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|req_origin| {
+                        if list.iter().any(|o| o == req_origin) {
+                            Some(req_origin.to_string())
+                        } else {
+                            None
+                        }
+                    })
+            }
+        };
+        let allow_methods = self.allow_methods.clone();
+        let allow_headers = self.allow_headers.clone();
         Box::pin(async move {
             if ctx.method() == Method::OPTIONS {
                 let mut response = StatusCode::NO_CONTENT.into_response();
-                apply_cors_headers(
-                    &mut response,
-                    &self.allow_origin,
-                    &self.allow_methods,
-                    &self.allow_headers,
-                );
+                if let Some(ref origin) = effective_origin {
+                    apply_cors_headers(&mut response, origin, &allow_methods, &allow_headers);
+                }
                 return Ok(response);
             }
 
             let mut response = next.run(ctx).await?;
-            apply_cors_headers(
-                &mut response,
-                &self.allow_origin,
-                &self.allow_methods,
-                &self.allow_headers,
-            );
+            if let Some(ref origin) = effective_origin {
+                apply_cors_headers(&mut response, origin, &allow_methods, &allow_headers);
+            }
             Ok(response)
         })
     }
@@ -177,19 +214,19 @@ impl RsqMiddleware for CorsMiddleware {
 
 fn apply_cors_headers(
     response: &mut Response,
-    allow_origin: &HeaderValue,
-    allow_methods: &HeaderValue,
-    allow_headers: &HeaderValue,
+    allow_origin: &str,
+    allow_methods: &str,
+    allow_headers: &str,
 ) {
-    response
-        .headers_mut()
-        .insert(ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin.clone());
-    response
-        .headers_mut()
-        .insert(ACCESS_CONTROL_ALLOW_METHODS, allow_methods.clone());
-    response
-        .headers_mut()
-        .insert(ACCESS_CONTROL_ALLOW_HEADERS, allow_headers.clone());
+    if let Ok(v) = HeaderValue::from_str(allow_origin) {
+        response.headers_mut().insert(ACCESS_CONTROL_ALLOW_ORIGIN, v);
+    }
+    if let Ok(v) = HeaderValue::from_str(allow_methods) {
+        response.headers_mut().insert(ACCESS_CONTROL_ALLOW_METHODS, v);
+    }
+    if let Ok(v) = HeaderValue::from_str(allow_headers) {
+        response.headers_mut().insert(ACCESS_CONTROL_ALLOW_HEADERS, v);
+    }
 }
 
 // ── Task 2.1: TimeoutMiddleware ──────────────────────────────────────────────
@@ -234,6 +271,11 @@ impl RsqMiddleware for RequestIdMiddleware {
                 .headers()
                 .get("x-request-id")
                 .and_then(|v| v.to_str().ok())
+                // fix: client-supplied X-Request-Id was reflected without validation
+                .filter(|s| {
+                    // Only accept UUID v4 format to prevent log injection
+                    s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+                })
                 .map(String::from)
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
@@ -321,12 +363,22 @@ impl RsqMiddleware for RateLimitMiddleware {
                 .peer_addr()
                 .map(|addr| addr.ip().to_string())
                 .or_else(|| {
+                    // fix: raw X-Forwarded-For string was used as key; attacker could create unlimited buckets
                     ctx.headers()
                         .get("x-forwarded-for")
                         .and_then(|v| v.to_str().ok())
-                        .map(String::from)
+                        .and_then(|s| s.split(',').next())
+                        .map(|ip| ip.trim().to_string())
                 })
                 .unwrap_or_else(|| "0.0.0.0".to_string());
+
+            // fix: rate limiter map had no eviction, enabling memory exhaustion
+            const MAX_RATE_LIMIT_ENTRIES: usize = 10_000;
+            if self.buckets.len() >= MAX_RATE_LIMIT_ENTRIES {
+                // Evict entries older than 60 seconds
+                let cutoff = std::time::Instant::now() - std::time::Duration::from_secs(60);
+                self.buckets.retain(|_, v| v.last_refill > cutoff);
+            }
 
             let allowed = {
                 let mut bucket = self.buckets
@@ -685,7 +737,15 @@ impl RsqMiddleware for CsrfMiddleware {
                     .map(String::from);
 
                 match (cookie_token, header_token) {
-                    (Some(cookie), Some(header)) if cookie == header => {}
+                    (Some(cookie), Some(header)) => {
+                        // fix: CSRF token comparison was non-constant-time, vulnerable to timing attacks
+                        use subtle::ConstantTimeEq;
+                        let tokens_match = cookie.len() == header.len() &&
+                            bool::from(cookie.as_bytes().ct_eq(header.as_bytes()));
+                        if !tokens_match {
+                            return Ok((StatusCode::FORBIDDEN, "CSRF token mismatch").into_response());
+                        }
+                    }
                     _ => {
                         return Ok((StatusCode::FORBIDDEN, "CSRF token mismatch").into_response());
                     }
@@ -897,7 +957,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn request_id_preserves_existing() {
+    async fn request_id_preserves_valid_uuid() {
+        let app = RsqApp::new()
+            .middleware(RequestIdMiddleware::new())
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+
+        // A valid UUID v4-format ID must be preserved
+        let valid_uuid = "550e8400-e29b-41d4-a716-446655440000";
+        let response = app
+            .handle(
+                Request::builder()
+                    .uri("/")
+                    .header("x-request-id", valid_uuid)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.headers()["x-request-id"], valid_uuid);
+    }
+
+    #[tokio::test]
+    async fn request_id_rejects_non_uuid_and_generates_new() {
+        // Security fix: non-UUID X-Request-Id values must not be reflected
         let app = RsqApp::new()
             .middleware(RequestIdMiddleware::new())
             .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
@@ -912,7 +994,10 @@ mod tests {
                     .unwrap(),
             )
             .await;
-        assert_eq!(response.headers()["x-request-id"], "my-custom-id");
+        // Should have a generated UUID, not the injected value
+        let returned_id = response.headers()["x-request-id"].to_str().unwrap();
+        assert_ne!(returned_id, "my-custom-id");
+        assert_eq!(returned_id.len(), 36);
     }
 
     // ── RateLimit tests ──────────────────────────────────────────────────

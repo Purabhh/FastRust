@@ -49,13 +49,17 @@ impl RequestContext {
         B::Error: std::error::Error + Send + Sync + 'static,
     {
         let (parts, body) = request.into_parts();
-        let collected = body
-            .collect()
-            .await
-            .map_err(|error| RsqError::internal(format!("failed to read request body: {error}")))?;
+        // fix: generic from_request had no body size limit
+        const DEFAULT_MAX_BODY: usize = 1024 * 1024; // 1MB default
+        let collected = body.collect().await
+            .map_err(|e| RsqError::internal(format!("failed to read request body: {e}")))?;
+        let bytes = collected.to_bytes();
+        if bytes.len() > DEFAULT_MAX_BODY {
+            return Err(RsqError::new(http::StatusCode::PAYLOAD_TOO_LARGE, "payload too large"));
+        }
         Ok(Self::new(
             parts,
-            RsqRequestBody::Buffered(collected.to_bytes()),
+            RsqRequestBody::Buffered(bytes),
             path_params,
             state,
             None,
@@ -121,18 +125,23 @@ impl RequestContext {
         let body = std::mem::replace(&mut self.body, RsqRequestBody::Consumed);
         match body {
             RsqRequestBody::Streaming(incoming) => {
-                let collected = incoming
-                    .collect()
-                    .await
-                    .map_err(|error| RsqError::internal(format!("failed to read request body: {error}")))?;
-                let bytes = collected.to_bytes();
-                if bytes.len() > self.max_body_size {
-                    return Err(RsqError::new(
-                        http::StatusCode::PAYLOAD_TOO_LARGE,
-                        format!("payload exceeded {} bytes", self.max_body_size),
-                    ));
+                // fix: body was fully buffered before size check, enabling heap-exhaustion DoS
+                use http_body_util::Limited;
+                let limited = Limited::new(incoming, self.max_body_size);
+                match limited.collect().await {
+                    Ok(collected) => Ok(collected.to_bytes()),
+                    Err(e) => {
+                        // Check if it's a length limit error
+                        if e.to_string().contains("length limit") {
+                            Err(RsqError::new(
+                                http::StatusCode::PAYLOAD_TOO_LARGE,
+                                format!("payload exceeded {} bytes", self.max_body_size),
+                            ))
+                        } else {
+                            Err(RsqError::internal(format!("failed to read request body: {e}")))
+                        }
+                    }
                 }
-                Ok(bytes)
             }
             RsqRequestBody::Buffered(bytes) => {
                 if bytes.len() > self.max_body_size {
