@@ -34,11 +34,10 @@ impl StaticFiles {
             // Normalise: strip trailing slash so prefix stripping is consistent
             p.trim_end_matches('/').to_string()
         };
-        // The router pattern must end with a wildcard segment so the trie
-        // matches any depth. We register with `{file}` for single-segment
-        // compatibility and fall back to reading the raw URI path for
-        // multi-segment paths (the trie does not support catch-all params).
-        let route_pattern = format!("{mount_prefix}/{{file}}");
+        // fix(H-4): use the `**` catch-all wildcard so the trie matches any
+        // depth below the mount prefix (e.g. /static/css/app.css). The handler
+        // always reads the real path from ctx.uri().path() anyway.
+        let route_pattern = format!("{mount_prefix}/**");
         Route::new(http::Method::GET, route_pattern, move |ctx: RequestContext| {
             let dir = Arc::clone(&dir);
             let prefix = mount_prefix.clone();

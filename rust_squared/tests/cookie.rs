@@ -28,6 +28,6 @@ async fn cookie_extractor_parses_header() {
 
 #[test]
 fn set_cookie_formats_correctly() {
-    let hv = set_cookie("session", "new123");
+    let hv = set_cookie("session", "new123").unwrap();
     assert_eq!(hv.to_str().unwrap(), "session=new123");
 }

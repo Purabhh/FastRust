@@ -13,6 +13,9 @@ pub struct TrieNode {
     static_children: HashMap<String, TrieNode>,
     param_child: Option<(String, Box<TrieNode>)>,
     route_indices: HashMap<Method, usize>,
+    /// fix(H-4): catch-all wildcard index — set when a `**` segment is the final
+    /// segment of an inserted pattern. Matches any remaining path depth during find.
+    wildcard_index: Option<usize>,
 }
 
 impl TrieNode {
@@ -24,7 +27,13 @@ impl TrieNode {
     ) -> Result<(), RsqError> {
         let segments = normalize_path(pattern);
         let mut current = self;
-        for segment in segments {
+        for segment in segments.iter().copied() {
+            // fix(H-4): `**` is a catch-all wildcard; must be the last segment.
+            // Store the route index on the current node and stop descending.
+            if segment == "**" {
+                current.wildcard_index = Some(route_index);
+                return Ok(());
+            }
             if is_param(segment) {
                 let param_name = segment[1..segment.len() - 1].to_string();
                 if current.param_child.is_none() {
@@ -76,6 +85,12 @@ impl TrieNode {
         params: &mut PathParams,
         method: &Method,
     ) -> Option<FindResult> {
+        // fix(H-4): if this node has a catch-all wildcard, it matches any remaining
+        // path — check before exhausting segments so deep paths are handled.
+        if let Some(index) = self.wildcard_index {
+            return Some(FindResult::Found(index));
+        }
+
         if depth == segments.len() {
             if let Some(index) = self.route_indices.get(method) {
                 // Return only the index; params are already in the caller's mut ref.

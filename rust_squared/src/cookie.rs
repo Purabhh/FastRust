@@ -56,15 +56,23 @@ impl FromRequest for CookieJar {
 }
 
 /// Build a `Set-Cookie` header value.
-pub fn set_cookie(name: &str, value: &str) -> http::HeaderValue {
+///
+/// Returns `Err` if the cookie name or value contains characters that are
+/// invalid in an HTTP header value (e.g. control characters).
+/// fix(H-2): was `expect()`; now returns `Result` so callers can handle errors.
+pub fn set_cookie(name: &str, value: &str) -> Result<http::HeaderValue, RsqError> {
     http::HeaderValue::from_str(&format!("{name}={value}"))
-        .expect("cookie name/value should be valid header chars")
+        .map_err(|_| RsqError::internal("cookie name/value contains invalid header characters"))
 }
 
 /// Build a `Set-Cookie` header value with attributes.
-pub fn set_cookie_with(name: &str, value: &str, attrs: &str) -> http::HeaderValue {
+///
+/// Returns `Err` if the cookie name, value, or attrs contain characters that
+/// are invalid in an HTTP header value.
+/// fix(H-2): was `expect()`; now returns `Result` so callers can handle errors.
+pub fn set_cookie_with(name: &str, value: &str, attrs: &str) -> Result<http::HeaderValue, RsqError> {
     http::HeaderValue::from_str(&format!("{name}={value}; {attrs}"))
-        .expect("cookie value should be valid header chars")
+        .map_err(|_| RsqError::internal("cookie value/attrs contain invalid header characters"))
 }
 
 #[cfg(test)]
@@ -120,13 +128,13 @@ mod tests {
 
     #[test]
     fn set_cookie_formats_correctly() {
-        let hv = set_cookie("session", "abc123");
+        let hv = set_cookie("session", "abc123").unwrap();
         assert_eq!(hv.to_str().unwrap(), "session=abc123");
     }
 
     #[test]
     fn set_cookie_with_attrs() {
-        let hv = set_cookie_with("session", "abc", "HttpOnly; Secure; Path=/");
+        let hv = set_cookie_with("session", "abc", "HttpOnly; Secure; Path=/").unwrap();
         assert_eq!(
             hv.to_str().unwrap(),
             "session=abc; HttpOnly; Secure; Path=/"

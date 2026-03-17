@@ -117,7 +117,8 @@ where
     T: Serialize,
 {
     fn into_response(self) -> Response {
-        let body = serde_json::to_vec(&self.0).expect("json serialization should succeed");
+        // fix(M-5): serialization failure no longer panics handler
+        let body = serde_json::to_vec(&self.0).unwrap_or_else(|_| b"null".to_vec());
         let mut response = http::Response::builder()
             .status(http::StatusCode::OK)
             .body(http_body_util::Full::new(bytes::Bytes::from(body)).boxed())
@@ -762,9 +763,8 @@ where
     T: DeserializeOwned + Validate + Send,
 {
     async fn from_request(ctx: &mut RequestContext) -> Result<Self, RsqError> {
-        let bytes = ctx.take_body_bytes().await?;
-
-        // Check content-type
+        // fix(H-5): check content-type BEFORE consuming the body so that a
+        // wrong content-type error does not also discard the request body.
         let content_type = ctx
             .headers()
             .get(CONTENT_TYPE)
@@ -776,6 +776,8 @@ where
                 "Content-Type must be application/json",
             ));
         }
+
+        let bytes = ctx.take_body_bytes().await?;
 
         let value: T = serde_json::from_slice(&bytes).map_err(|e| {
             RsqError::unprocessable_entity(format!("invalid JSON: {e}"))

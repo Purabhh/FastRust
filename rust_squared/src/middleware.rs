@@ -247,7 +247,8 @@ impl RsqMiddleware for TimeoutMiddleware {
         Box::pin(async move {
             match tokio::time::timeout(self.duration, next.run(ctx)).await {
                 Ok(result) => result,
-                Err(_) => Ok((StatusCode::GATEWAY_TIMEOUT, "request timed out").into_response()),
+                // fix(L-2): timeout returns 408 Request Timeout, not 504 Gateway Timeout
+                Err(_) => Ok((StatusCode::REQUEST_TIMEOUT, "request timed out").into_response()),
             }
         })
     }
@@ -752,9 +753,25 @@ impl RsqMiddleware for CsrfMiddleware {
                 }
             }
 
+            // fix(M-4): extract existing CSRF token BEFORE moving ctx into next.run()
+            let existing_token = if is_safe {
+                ctx.headers()
+                    .get("cookie")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| {
+                        let prefix = format!("{}=", self.cookie_name);
+                        s.split(';').find(|p| p.trim().starts_with(&prefix))
+                    })
+                    .and_then(|p| p.trim().split_once('=').map(|x| x.1.to_string()))
+            } else {
+                None
+            };
+
             let mut response = next.run(ctx).await?;
             if is_safe {
-                let token = self.generate_token();
+                // fix(M-4): CSRF token was rotated on every GET causing race with
+                // concurrent requests; only generate a new token when none exists.
+                let token = existing_token.unwrap_or_else(|| self.generate_token());
                 let cookie_value = format!(
                     "{}={}; Path=/; SameSite=Strict; Secure",
                     self.cookie_name, token
@@ -923,7 +940,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_returns_504_on_slow_handler() {
+    // fix(L-2): test renamed; timeout now returns 408 Request Timeout, not 504
+    async fn timeout_returns_408_on_slow_handler() {
         let app = RsqApp::new()
             .middleware(TimeoutMiddleware::new(Duration::from_millis(10)))
             .route(Route::new(Method::GET, "/slow", |_| async {
@@ -935,7 +953,7 @@ mod tests {
         let response = app
             .handle(Request::builder().uri("/slow").body(Full::new(Bytes::new())).unwrap())
             .await;
-        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
     }
 
     // ── RequestId tests ──────────────────────────────────────────────────

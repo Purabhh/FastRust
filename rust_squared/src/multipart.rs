@@ -87,6 +87,10 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+/// Maximum number of parts accepted from a single multipart body.
+/// fix(M-1): prevents unbounded memory use from maliciously crafted requests.
+const MAX_PARTS: usize = 100;
+
 fn parse_multipart(body: &[u8], boundary: &str) -> Result<Multipart, RsqError> {
     let delimiter = format!("--{boundary}");
     let end_delimiter = format!("--{boundary}--");
@@ -97,7 +101,13 @@ fn parse_multipart(body: &[u8], boundary: &str) -> Result<Multipart, RsqError> {
     let mut search_start = 0usize;
 
     // Find all delimiter positions by byte searching
+    // fix(M-1): loop now breaks when find_subsequence returns None (boundary not found)
+    // instead of looping forever; also enforces MAX_PARTS limit.
     while let Some(p) = find_subsequence(&body[search_start..], delim_bytes) {
+        // fix(M-1): enforce max parts limit to prevent resource exhaustion
+        if parts.len() >= MAX_PARTS {
+            break;
+        }
         let delim_pos = search_start + p;
 
         // Check if this is the closing delimiter
@@ -187,6 +197,11 @@ fn parse_multipart(body: &[u8], boundary: &str) -> Result<Multipart, RsqError> {
             });
         }
 
+        // fix(M-1): if section_end didn't advance search_start, force advancement
+        // to prevent an infinite loop on malformed input.
+        if section_end <= search_start {
+            break;
+        }
         search_start = section_end;
     }
 
