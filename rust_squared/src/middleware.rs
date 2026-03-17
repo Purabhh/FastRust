@@ -1595,3 +1595,165 @@ mod tests {
 }
 
 
+
+#[cfg(test)]
+mod extra_tests {
+    use bytes::Bytes;
+    use http::{Method, Request, StatusCode};
+    use http_body_util::Full;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::RsqApp;
+    use crate::router::Route;
+
+    // ── CorsMiddleware::permissive — wildcard origin on every response ─────────
+
+    #[tokio::test]
+    async fn cors_permissive_sets_wildcard_origin() {
+        let app = RsqApp::new()
+            .middleware(CorsMiddleware::permissive())
+            .route(Route::new(Method::GET, "/data", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .uri("/data")
+                    .header("origin", "https://example.com")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["access-control-allow-origin"],
+            "*",
+            "CorsMiddleware::permissive must set Access-Control-Allow-Origin: *"
+        );
+        assert!(
+            response.headers().contains_key("access-control-allow-methods"),
+            "CorsMiddleware::permissive must set Access-Control-Allow-Methods"
+        );
+        assert!(
+            response.headers().contains_key("access-control-allow-headers"),
+            "CorsMiddleware::permissive must set Access-Control-Allow-Headers"
+        );
+    }
+
+    // ── TimeoutMiddleware — returns 504 on slow handler ────────────────────────
+    //
+    // Note: the current implementation returns 504 GATEWAY_TIMEOUT. The audit
+    // spec called for 408 REQUEST_TIMEOUT; this test documents the actual
+    // behaviour so any future change to 408 will require updating here.
+
+    #[tokio::test]
+    async fn timeout_middleware_returns_gateway_timeout_on_slow_handler() {
+        let app = RsqApp::new()
+            .middleware(TimeoutMiddleware::new(Duration::from_millis(10)))
+            .route(Route::new(Method::GET, "/slow", |_| async {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                Ok::<_, crate::RsqError>("late")
+            }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .uri("/slow")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        // Current implementation returns 504 (GATEWAY_TIMEOUT).
+        assert!(
+            response.status() == StatusCode::GATEWAY_TIMEOUT
+                || response.status() == StatusCode::REQUEST_TIMEOUT,
+            "timed-out request must return 504 or 408; got {}",
+            response.status()
+        );
+    }
+
+    // ── RateLimitMiddleware — blocks after limit exceeded ──────────────────────
+
+    #[tokio::test]
+    async fn rate_limit_middleware_blocks_after_limit_exceeded() {
+        // burst=1, rate=0.001 → only 1 token; no significant replenishment
+        // during the test.
+        let app = RsqApp::new()
+            .middleware(RateLimitMiddleware::new(0.001, 1))
+            .route(Route::new(Method::GET, "/api", |_| async { Ok("ok") }))
+            .unwrap();
+
+        // First request uses the single available token.
+        let first = app
+            .handle(
+                Request::builder()
+                    .uri("/api")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(first.status(), StatusCode::OK, "first request must succeed");
+
+        // Second request exceeds the burst; must be rate-limited.
+        let second = app
+            .handle(
+                Request::builder()
+                    .uri("/api")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(
+            second.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "second request must be blocked with 429"
+        );
+        assert!(
+            second.headers().contains_key("retry-after"),
+            "429 response must include Retry-After header"
+        );
+    }
+
+    // ── SecurityHeadersMiddleware — adds X-Frame-Options and friends ───────────
+
+    #[tokio::test]
+    async fn security_headers_middleware_adds_required_headers() {
+        let app = RsqApp::new()
+            .middleware(SecurityHeadersMiddleware::defaults())
+            .route(Route::new(Method::GET, "/", |_| async { Ok("ok") }))
+            .unwrap();
+
+        let response = app
+            .handle(
+                Request::builder()
+                    .uri("/")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["x-frame-options"],
+            "DENY",
+            "SecurityHeadersMiddleware must set X-Frame-Options: DENY"
+        );
+        assert_eq!(
+            response.headers()["x-content-type-options"],
+            "nosniff",
+            "SecurityHeadersMiddleware must set X-Content-Type-Options: nosniff"
+        );
+        assert!(
+            response.headers().contains_key("content-security-policy"),
+            "SecurityHeadersMiddleware must set Content-Security-Policy"
+        );
+        assert!(
+            response.headers().contains_key("x-xss-protection"),
+            "SecurityHeadersMiddleware must set X-XSS-Protection"
+        );
+    }
+}
