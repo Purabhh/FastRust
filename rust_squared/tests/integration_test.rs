@@ -109,7 +109,10 @@ async fn middleware_chain_attaches_request_id() {
     );
 }
 
-/// Caller-supplied X-Request-Id is preserved by RequestIdMiddleware.
+/// A caller-supplied X-Request-Id is preserved by RequestIdMiddleware when it
+/// is a valid UUID. (Non-UUID values are intentionally rejected and replaced
+/// with a fresh UUID — a log-injection hardening covered by the unit tests in
+/// `middleware.rs`.)
 #[tokio::test]
 async fn middleware_chain_preserves_caller_request_id() {
     let app = RsqApp::new()
@@ -118,14 +121,15 @@ async fn middleware_chain_preserves_caller_request_id() {
         .unwrap();
 
     let client = TestClient::new(app);
+    let caller_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
     let res = client
         .get("/ping")
-        .header("x-request-id", "caller-provided-id")
+        .header("x-request-id", caller_id)
         .send()
         .await;
 
     res.assert_ok();
-    assert_eq!(res.header("x-request-id").unwrap_or(""), "caller-provided-id");
+    assert_eq!(res.header("x-request-id").unwrap_or(""), caller_id);
 }
 
 /// Unknown route returns 404.
